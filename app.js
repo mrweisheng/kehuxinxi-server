@@ -50,7 +50,7 @@ const statisticsRoutes = require('./routes/statisticsRoutes');
 app.use('/api/statistics', statisticsRoutes);
 
 // 测试数据库连接并启动服务
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 9527;
 (async () => {
   try {
     await sequelize.authenticate();
