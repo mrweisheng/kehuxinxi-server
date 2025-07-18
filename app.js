@@ -35,7 +35,15 @@ app.use((req, res, next) => {
 
 app.use(bodyParser.json());
 
-// 路由
+// 用户路由（无需鉴权）
+const userRoutes = require('./routes/userRoutes');
+app.use('/api/users', userRoutes);
+
+// 鉴权中间件（保护所有业务接口）
+const authMiddleware = require('./middleware/auth');
+app.use(authMiddleware);
+
+// 业务路由（需要鉴权）
 const leadRoutes = require('./routes/leadRoutes');
 app.use('/api/leads', leadRoutes);
 const followupRoutes = require('./routes/followupRoutes');
