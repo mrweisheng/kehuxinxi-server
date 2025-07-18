@@ -1,8 +1,197 @@
 【客资登记系统 API 文档】
 
 ============================
+0. 用户认证与鉴权
+============================
+
+0.1 用户注册
+POST /api/users/register
+参数（JSON）：
+{
+  "username": "admin",
+  "password": "123456",
+  "nickname": "管理员",
+  "role": "admin"
+}
+
+成功返回：
+{
+  "code": 0,
+  "message": "注册成功",
+  "data": {
+    "id": 1,
+    "username": "admin"
+  }
+}
+
+错误返回：
+{
+  "code": 400,
+  "message": "用户名和密码必填"
+}
+
+0.2 用户登录
+POST /api/users/login
+参数（JSON）：
+{
+  "username": "admin",
+  "password": "123456"
+}
+
+成功返回：
+{
+  "code": 0,
+  "message": "登录成功",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "user": {
+      "id": 1,
+      "username": "admin",
+      "nickname": "管理员",
+      "role": "admin"
+    }
+  }
+}
+
+错误返回：
+{
+  "code": 400,
+  "message": "用户名和密码必填"
+}
+
+0.3 获取用户列表
+GET /api/users
+
+成功返回：
+{
+  "code": 0,
+  "data": [
+    {
+      "id": 1,
+      "username": "admin",
+      "nickname": "管理员",
+      "role": "admin",
+      "created_at": "2024-01-01T10:00:00.000Z",
+      "updated_at": "2024-01-01T10:00:00.000Z"
+    }
+  ]
+}
+
+错误返回：
+{
+  "code": 500,
+  "message": "查询失败",
+  "error": "错误详情"
+}
+
+0.4 获取所有客服用户
+GET /api/users/service
+
+成功返回：
+{
+  "code": 0,
+  "data": [
+    {
+      "id": 3,
+      "username": "customer01",
+      "nickname": "客服1",
+      "role": "service",
+      "created_at": "2025-07-18T10:13:13.000Z",
+      "updated_at": "2025-07-18T10:13:13.000Z"
+    }
+    // ...更多客服用户
+  ]
+}
+
+错误返回：
+{
+  "code": 500,
+  "message": "查询失败",
+  "error": "错误详情"
+}
+
+说明：
+- 仅返回 role = 'service' 的用户，且不包含密码字段。
+
+0.4 获取用户详情
+GET /api/users/:id
+
+成功返回：
+{
+  "code": 0,
+  "data": {
+    "id": 1,
+    "username": "admin",
+    "nickname": "管理员",
+    "role": "admin",
+    "created_at": "2024-01-01T10:00:00.000Z",
+    "updated_at": "2024-01-01T10:00:00.000Z"
+  }
+}
+
+错误返回：
+{
+  "code": 404,
+  "message": "用户不存在"
+}
+
+0.5 修改用户信息
+PUT /api/users/:id
+参数（JSON）：
+{
+  "nickname": "新昵称",
+  "role": "manager",
+  "password": "新密码"
+}
+
+说明：
+- 所有参数都是可选的，只修改传入的字段
+- 如果传入 password，会自动加密存储
+- 返回的用户信息中不包含密码字段
+
+成功返回：
+{
+  "code": 0,
+  "message": "修改成功"
+}
+
+错误返回：
+{
+  "code": 404,
+  "message": "用户不存在"
+}
+
+0.6 删除用户
+DELETE /api/users/:id
+
+成功返回：
+{
+  "code": 0,
+  "message": "删除成功"
+}
+
+错误返回：
+{
+  "code": 404,
+  "message": "用户不存在"
+}
+
+注意：
+- 用户管理接口需要管理员权限
+- 删除用户前请确保该用户没有关联的重要数据
+- 密码字段在所有返回中都会被自动排除
+
+============================
 1. 线索管理（customer_leads）
 ============================
+
+注意：以下所有业务接口都需要在请求头中携带有效的 JWT Token：
+Authorization: Bearer your_jwt_token
+
+示例：
+GET /api/leads
+Headers:
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 1.1 新增线索
 POST /api/leads
@@ -15,14 +204,18 @@ POST /api/leads
   "lead_time": "2024-06-01 10:00:00",
   "is_contacted": 1,
   "intention_level": "高",
-  "follow_up_person": "张三",
+  // "follow_up_person" 字段由后端自动填充为当前登录用户ID，前端无需传递
   "is_deal": 0,
   "deal_date": null,
   "follow_up_content": "客户首次进线索，需要进一步跟进", // 必填字段
-  "create_follow_up": true // 可选，默认为true，是否创建跟进记录
+  "create_follow_up": true, // 可选，默认为true，是否创建跟进记录
+  "current_follower": 2 // 必填，分配给谁跟进，传用户ID
 }
 
 注意：
+- follow_up_person 字段由后端自动填充为当前登录用户ID，前端无需传递
+- current_follower 字段为必填，前端必须传递用户ID，表示分配给谁跟进
+- 编辑线索时禁止前端修改 follow_up_person 字段，且 current_follower 字段由后端自动覆盖为当前登录用户ID，前端传不传都无效
 - created_at（创建时间）和updated_at（更新时间）由系统自动处理，前端无需传递
 - create_follow_up默认为true，新增线索时会自动创建首次跟进记录
 - 如果设置为false，则不会创建跟进记录
@@ -552,4 +745,31 @@ DELETE /api/remind-email-list/:id
 字段说明：
 - email：收件人邮箱，单条记录
 
-说明：所有意向级别的超期提醒都发给该邮箱列表。 
+说明：所有意向级别的超期提醒都发给该邮箱列表。
+
+============================
+7. 鉴权错误码说明
+============================
+
+所有业务接口（除注册、登录外）都需要在请求头中携带有效的 JWT Token：
+
+Headers:
+Authorization: Bearer your_jwt_token
+
+常见错误码：
+- 401: 未携带有效token
+  {
+    "code": 401,
+    "message": "未携带有效token"
+  }
+
+- 401: token无效或已过期
+  {
+    "code": 401,
+    "message": "token无效或已过期"
+  }
+
+使用流程：
+1. 先调用 POST /api/users/register 注册用户
+2. 再调用 POST /api/users/login 登录获取 token
+3. 后续所有业务接口都在请求头中携带 Authorization: Bearer token 

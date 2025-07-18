@@ -5,6 +5,9 @@ const FollowUpRecord = require('../models/followupModel');
 const FollowupRemindConfig = require('../models/followupRemindConfig');
 const RemindEmailList = require('../models/remindEmailList');
 const { sendMail } = require('../utils/emailSender');
+const cron = require('node-cron');
+const dotenv = require('dotenv');
+dotenv.config();
 
 // 检查所有意向级别的超期线索并发送邮件
 async function checkOverdueLeads() {
@@ -150,31 +153,48 @@ async function sendOverdueRemindEmail(overdueList, emailList) {
   }
 }
 
-// 启动定时检查（每天上午9点执行）
+// 启动定时检查（项目启动时立即执行，后续每天5个固定时间点执行）
 function startScheduledCheck() {
-  const now = new Date();
-  const firstCheck = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
-  if (now > firstCheck) {
-    firstCheck.setDate(firstCheck.getDate() + 1);
-  }
-  const timeUntilFirstCheck = firstCheck.getTime() - now.getTime();
+  // 项目启动时立即执行一次
+  checkOverdueLeads();
 
-  // 每天9点首次触发
-  setTimeout(() => {
-    checkOverdueLeads();
-    // 之后每2.5小时触发一次（共5次）
-    setInterval(() => {
-      const hour = new Date().getHours();
-      // 只在9点、11点半、14点、16点半、19点触发
-      if ([9, 11, 14, 16, 19].includes(hour) || (hour === 11 && new Date().getMinutes() >= 30) || (hour === 16 && new Date().getMinutes() >= 30)) {
+  // 从环境变量读取定时表达式
+  const cronTimes = process.env.REMIND_CRON_TIMES || '0 9 * * *,30 11 * * *,0 14 * * *,30 16 * * *,0 19 * * *';
+  cronTimes.split(',').forEach(expr => {
+    const cronExpr = expr.trim();
+    if (cronExpr) {
+      cron.schedule(cronExpr, () => {
         checkOverdueLeads();
-      }
-    }, 2.5 * 60 * 60 * 1000);
-  }, timeUntilFirstCheck);
+      });
+    }
+  });
 }
 
-module.exports = { 
-  checkOverdueLeads, 
+// 工具函数：根据线索ID自动更新need_followup字段
+async function updateNeedFollowupByLeadId(leadId, transaction) {
+  const lead = await CustomerLead.findByPk(leadId, { transaction });
+  if (!lead) return;
+  // 已终结线索直接设为0
+  if (lead.end_followup === 1) {
+    await CustomerLead.update({ need_followup: 0 }, { where: { id: leadId }, transaction });
+    return;
+  }
+  const latestFollowUp = await FollowUpRecord.findOne({
+    where: { lead_id: leadId },
+    order: [['follow_up_time', 'DESC']],
+    transaction
+  });
+  const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time) : dayjs(lead.lead_time);
+  const config = await FollowupRemindConfig.findOne({ where: { intention_level: lead.intention_level }, transaction });
+  const interval = config ? config.interval_days : 3;
+  const now = dayjs();
+  const overdue = now.diff(lastTime, 'day') >= interval;
+  await CustomerLead.update({ need_followup: overdue ? 1 : 0 }, { where: { id: leadId }, transaction });
+}
+
+module.exports = {
+  checkOverdueLeads,
   sendOverdueRemindEmail,
-  startScheduledCheck 
+  startScheduledCheck,
+  updateNeedFollowupByLeadId
 }; 

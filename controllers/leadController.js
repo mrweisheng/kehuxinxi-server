@@ -1,6 +1,9 @@
 const CustomerLead = require('../models/leadModel');
 const FollowUpRecord = require('../models/followupModel');
+const FollowupRemindConfig = require('../models/followupRemindConfig');
 const { Op } = require('sequelize');
+const dayjs = require('dayjs');
+const { updateNeedFollowupByLeadId } = require('../services/followupRemindChecker');
 
 // 验证必填字段
 function validateLeadData(data) {
@@ -88,10 +91,20 @@ exports.createLead = async (req, res) => {
       });
     }
     
+    // 校验 current_follower 必须传且为数字
+    if (!data.current_follower || isNaN(Number(data.current_follower))) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({ success: false, message: 'current_follower（跟进人用户ID）必填且必须为有效用户ID' });
+    }
+
     // 处理 deal_date 字段
     if (data.deal_date === '') {
       data.deal_date = null;
     }
+
+    // 自动填充登记人
+    data.follow_up_person = req.user.id;
     
     // 记录数据库操作开始时间
     const dbStartTime = Date.now();
@@ -224,45 +237,47 @@ exports.getLeads = async (req, res) => {
     const offset = (page - 1) * page_size;
     const dbStartTime = Date.now();
     
-    // 使用关联查询获取线索及其最新跟进记录
+    // 查询意向等级对应的最大未跟进天数配置
+    const remindConfigs = await FollowupRemindConfig.findAll({ raw: true });
+    const configMap = {};
+    remindConfigs.forEach(cfg => {
+      configMap[cfg.intention_level] = cfg.interval_days;
+    });
+    
+    // 恢复数据库 need_followup 字段排序
     const { count, rows } = await CustomerLead.findAndCountAll({
       where,
       offset: Number(offset),
       limit: Number(page_size),
       order: [
-        ['need_followup', 'DESC'], // 需跟进优先
-        ['lead_time', 'DESC']      // 时间倒序
+        ['need_followup', 'DESC'],
+        ['lead_time', 'DESC']
       ],
       include: [
         {
           model: FollowUpRecord,
           as: 'followUps',
           attributes: ['follow_up_time', 'follow_up_content'],
-          separate: true, // 分离查询，避免N+1问题
-          order: [['follow_up_time', 'DESC']], // 按跟进时间倒序
-          limit: 1 // 只取最新的一条
+          separate: true,
+          order: [['follow_up_time', 'DESC']],
+          limit: 1
         }
       ]
     });
     
-    // 处理返回数据，提取最新跟进记录
+    // 直接返回数据库 need_followup 字段
     const processedRows = rows.map(lead => {
       const leadData = lead.toJSON();
-      const latestFollowUp = leadData.followUps && leadData.followUps.length > 0 
-        ? leadData.followUps[0] 
+      const latestFollowUp = leadData.followUps && leadData.followUps.length > 0
+        ? leadData.followUps[0]
         : null;
-      
       return {
         ...leadData,
         latest_follow_up: latestFollowUp ? {
           follow_up_time: latestFollowUp.follow_up_time,
           follow_up_content: latestFollowUp.follow_up_content
         } : null,
-        // 明确保留新加的三个字段
-        need_followup: leadData.need_followup,
-        end_followup: leadData.end_followup,
-        end_followup_reason: leadData.end_followup_reason,
-        followUps: undefined // 移除原始跟进记录数组
+        followUps: undefined
       };
     });
     
@@ -295,7 +310,7 @@ exports.getLeads = async (req, res) => {
   }
 };
 
-// 获取线索详情
+// 获取线索详情（同理动态判断need_followup）
 exports.getLeadDetail = async (req, res) => {
   const startTime = Date.now();
   try {
@@ -315,6 +330,13 @@ exports.getLeadDetail = async (req, res) => {
     
     const dbStartTime = Date.now();
     
+    // 查询意向等级对应的最大未跟进天数配置
+    const remindConfigs = await FollowupRemindConfig.findAll({ raw: true });
+    const configMap = {};
+    remindConfigs.forEach(cfg => {
+      configMap[cfg.intention_level] = cfg.interval_days;
+    });
+    
     // 使用关联查询获取线索及其最新跟进记录
     const lead = await CustomerLead.findByPk(id, {
       include: [
@@ -322,9 +344,9 @@ exports.getLeadDetail = async (req, res) => {
           model: FollowUpRecord,
           as: 'followUps',
           attributes: ['follow_up_time', 'follow_up_content'],
-          separate: true, // 分离查询，避免N+1问题
-          order: [['follow_up_time', 'DESC']], // 按跟进时间倒序
-          limit: 1 // 只取最新的一条
+          separate: true,
+          order: [['follow_up_time', 'DESC']],
+          limit: 1
         }
       ]
     });
@@ -345,23 +367,25 @@ exports.getLeadDetail = async (req, res) => {
       });
     }
     
-    // 处理返回数据，提取最新跟进记录
+    // 处理返回数据，动态判断need_followup
+    const now = dayjs();
     const leadData = lead.toJSON();
-    const latestFollowUp = leadData.followUps && leadData.followUps.length > 0 
-      ? leadData.followUps[0] 
+    const latestFollowUp = leadData.followUps && leadData.followUps.length > 0
+      ? leadData.followUps[0]
       : null;
-    
+    const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time) : dayjs(leadData.lead_time);
+    const interval = configMap[leadData.intention_level] || 3;
+    const overdue = now.diff(lastTime, 'day') >= interval;
     const processedData = {
       ...leadData,
       latest_follow_up: latestFollowUp ? {
         follow_up_time: latestFollowUp.follow_up_time,
         follow_up_content: latestFollowUp.follow_up_content
       } : null,
-      // 明确保留新加的三个字段
-      need_followup: leadData.need_followup,
+      need_followup: overdue ? 1 : 0,
       end_followup: leadData.end_followup,
       end_followup_reason: leadData.end_followup_reason,
-      followUps: undefined // 移除原始跟进记录数组
+      followUps: undefined
     };
     
     console.log(`获取线索详情完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms`);
@@ -387,7 +411,7 @@ exports.getLeadDetail = async (req, res) => {
   }
 };
 
-// 编辑线索
+// 编辑线索时禁止前端修改登记人
 exports.updateLead = async (req, res) => {
   const startTime = Date.now();
   let transaction;
@@ -408,6 +432,14 @@ exports.updateLead = async (req, res) => {
       });
     }
     
+    // 禁止前端修改登记人
+    if ('follow_up_person' in data) {
+      delete data.follow_up_person;
+    }
+    
+    // 自动用当前登录用户ID覆盖 current_follower
+    data.current_follower = req.user.id;
+
     // 验证更新数据
     if (data.intention_level && !['高', '中', '低'].includes(data.intention_level)) {
       const totalTime = Date.now() - startTime;
@@ -479,10 +511,12 @@ exports.updateLead = async (req, res) => {
         follow_up_method: data.follow_up_method || '编辑跟进', // 跟进方式
         follow_up_content: data.follow_up_content, // 跟进内容
         follow_up_result: data.follow_up_result || '待跟进', // 跟进结果
-        follow_up_person: data.follow_up_person || data.follow_up_person // 跟进人
+        follow_up_person: req.user.id // 自动填充为当前登录用户ID
       };
       
       followUp = await FollowUpRecord.create(followUpData, { transaction });
+      // 新增：自动更新 need_followup 字段（事务内）
+      await updateNeedFollowupByLeadId(id, transaction);
     }
     
     // 提交事务
@@ -506,7 +540,6 @@ exports.updateLead = async (req, res) => {
     
     console.log(`编辑线索完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms`);
     console.log(`更新线索ID: ${id}${followUp ? `, 创建跟进记录ID: ${followUp.id}` : ', 未创建跟进记录'}`);
-    
     res.json({ 
       success: true,
       updatedLead: true,
@@ -526,109 +559,19 @@ exports.updateLead = async (req, res) => {
     const totalTime = Date.now() - startTime;
     console.error(`编辑线索出错 - 总耗时: ${totalTime}ms`, err);
     
+    // 区分不同类型的错误
     let statusCode = 500;
     let errorMessage = err.message;
     
     if (err.name === 'SequelizeValidationError') {
       statusCode = 400;
       errorMessage = '数据验证失败: ' + err.message;
+    } else if (err.name === 'SequelizeUniqueConstraintError') {
+      statusCode = 400;
+      errorMessage = '数据已存在，请检查输入信息';
     } else if (err.name === 'SequelizeForeignKeyConstraintError') {
       statusCode = 400;
       errorMessage = '关联数据错误，请检查输入信息';
-    }
-    
-    res.status(statusCode).json({ 
-      success: false, 
-      message: errorMessage,
-      performance: {
-        totalTime: `${totalTime}ms`
-      }
-    });
-  }
-};
-
-// 删除线索
-exports.deleteLead = async (req, res) => {
-  const startTime = Date.now();
-  let transaction;
-  
-  try {
-    const id = req.params.id;
-    
-    // 参数验证
-    if (!id || isNaN(Number(id))) {
-      const totalTime = Date.now() - startTime;
-      return res.status(400).json({
-        success: false,
-        message: '无效的线索ID',
-        performance: {
-          totalTime: `${totalTime}ms`
-        }
-      });
-    }
-    
-    // 初始化事务
-    transaction = await CustomerLead.sequelize.transaction();
-    
-    const dbStartTime = Date.now();
-    
-    // 1. 先删除关联的跟进记录
-    const deletedFollowUps = await FollowUpRecord.destroy({ 
-      where: { lead_id: id },
-      transaction 
-    });
-    
-    // 2. 再删除线索记录
-    const deletedLead = await CustomerLead.destroy({ 
-      where: { id },
-      transaction 
-    });
-    
-    // 提交事务
-    await transaction.commit();
-    
-    const dbEndTime = Date.now();
-    
-    const totalTime = Date.now() - startTime;
-    const dbTime = dbEndTime - dbStartTime;
-    
-    if (!deletedLead) {
-      return res.status(404).json({ 
-        success: false, 
-        message: '未找到该线索',
-        performance: {
-          totalTime: `${totalTime}ms`,
-          dbTime: `${dbTime}ms`
-        }
-      });
-    }
-    
-    console.log(`删除线索完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms`);
-    console.log(`删除线索ID: ${id}, 同时删除跟进记录数量: ${deletedFollowUps}`);
-    
-    res.json({ 
-      success: true,
-      deletedFollowUps,
-      performance: {
-        totalTime: `${totalTime}ms`,
-        dbTime: `${dbTime}ms`
-      }
-    });
-  } catch (err) {
-    // 回滚事务（如果事务已创建）
-    if (transaction) {
-      await transaction.rollback();
-    }
-    
-    const totalTime = Date.now() - startTime;
-    console.error(`删除线索出错 - 总耗时: ${totalTime}ms`, err);
-    
-    let statusCode = 500;
-    let errorMessage = err.message;
-    
-    if (err.name === 'SequelizeForeignKeyConstraintError') {
-      statusCode = 400;
-      errorMessage = '删除失败，该线索可能被其他数据引用';
     } else if (err.name === 'SequelizeConnectionError') {
       statusCode = 500;
       errorMessage = '数据库连接失败，请稍后重试';
@@ -642,4 +585,80 @@ exports.deleteLead = async (req, res) => {
       }
     });
   }
-}; 
+};
+
+exports.deleteLead = async (req, res) => {
+  const startTime = Date.now();
+  let transaction;
+  try {
+    const id = req.params.id;
+    // 参数验证
+    if (!id || isNaN(Number(id))) {
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '无效的线索ID',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    // 初始化事务
+    transaction = await CustomerLead.sequelize.transaction();
+    const dbStartTime = Date.now();
+    // 1. 先删除关联的跟进记录
+    const deletedFollowUps = await FollowUpRecord.destroy({
+      where: { lead_id: id },
+      transaction
+    });
+    // 2. 再删除线索记录
+    const deletedLead = await CustomerLead.destroy({
+      where: { id },
+      transaction
+    });
+    // 提交事务
+    await transaction.commit();
+    const dbEndTime = Date.now();
+    const totalTime = Date.now() - startTime;
+    const dbTime = dbEndTime - dbStartTime;
+    if (!deletedLead) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到该线索',
+        performance: {
+          totalTime: `${totalTime}ms`,
+          dbTime: `${dbTime}ms`
+        }
+      });
+    }
+    res.json({
+      success: true,
+      deletedFollowUps,
+      performance: {
+        totalTime: `${totalTime}ms`,
+        dbTime: `${dbTime}ms`
+      }
+    });
+  } catch (err) {
+    if (transaction) {
+      await transaction.rollback();
+    }
+    const totalTime = Date.now() - startTime;
+    let statusCode = 500;
+    let errorMessage = err.message;
+    if (err.name === 'SequelizeForeignKeyConstraintError') {
+      statusCode = 400;
+      errorMessage = '删除失败，该线索可能被其他数据引用';
+    } else if (err.name === 'SequelizeConnectionError') {
+      statusCode = 500;
+      errorMessage = '数据库连接失败，请稍后重试';
+    }
+    res.status(statusCode).json({
+      success: false,
+      message: errorMessage,
+      performance: {
+        totalTime: `${totalTime}ms`
+      }
+    });
+  }
+};
