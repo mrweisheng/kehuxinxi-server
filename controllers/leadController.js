@@ -76,8 +76,9 @@ exports.createLead = async (req, res) => {
     const data = req.body;
     // 日志打印入参
     console.log('收到新增线索请求:', JSON.stringify(data));
-    
-    // 参数验证
+    // 先自动填充登记人
+    data.follow_up_person = req.user.id;
+    // 参数校验
     const validation = validateLeadData(data);
     if (!validation.valid) {
       await transaction.rollback();
@@ -102,9 +103,6 @@ exports.createLead = async (req, res) => {
     if (data.deal_date === '') {
       data.deal_date = null;
     }
-
-    // 自动填充登记人
-    data.follow_up_person = req.user.id;
     
     // 记录数据库操作开始时间
     const dbStartTime = Date.now();

@@ -30,7 +30,7 @@ async function checkOverdueLeads() {
     for (const config of configs) {
       // 查找该意向级别所有线索及其最新跟进时间
       const leads = await CustomerLead.findAll({
-        where: { intention_level: config.intention_level },
+        where: { intention_level: config.intention_level, end_followup: 0 },
         attributes: ['id', 'customer_nickname', 'intention_level', 'lead_time', 'follow_up_person', 'contact_account'],
         include: [{
           model: FollowUpRecord,
