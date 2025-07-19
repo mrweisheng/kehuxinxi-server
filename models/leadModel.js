@@ -78,6 +78,12 @@ const CustomerLead = sequelize.define('customer_leads', {
     allowNull: true,
     comment: '终结跟进原因'
   },
+  // 新增字段：当前跟进人用户ID
+  current_follower: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '当前跟进人用户ID'
+  },
   created_at: {
     type: DataTypes.DATE,
     allowNull: false,
