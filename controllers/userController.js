@@ -95,11 +95,11 @@ exports.remove = async (req, res) => {
   }
 };
 
-// 获取所有客服用户
-exports.listServiceUsers = async (req, res) => {
+// 获取所有销售用户
+exports.listSalesUsers = async (req, res) => {
   try {
     const users = await User.findAll({
-      where: { role: 'service' },
+      where: { role: 'sales' },
       attributes: { exclude: ['password'] }
     });
     res.json({ code: 0, data: users.map(u => u.toJSON()) });

@@ -105,11 +105,17 @@ exports.createLead = async (req, res) => {
       data.deal_date = null;
     }
     
+    // 调试：打印传递给Sequelize的数据
+    console.log('传递给Sequelize的数据:', JSON.stringify(data, null, 2));
+    
     // 记录数据库操作开始时间
     const dbStartTime = Date.now();
     
     // 1. 创建线索记录
     const lead = await CustomerLead.create(data, { transaction });
+    
+    // 调试：打印创建后的线索数据
+    console.log('创建后的线索数据:', JSON.stringify(lead.toJSON(), null, 2));
     
     // 2. 创建首次跟进记录（新增线索时默认创建）
     let followUp = null;
@@ -231,6 +237,29 @@ exports.getLeads = async (req, res) => {
     // 新增：客户昵称模糊检索
     if (req.query.customer_nickname) {
       where.customer_nickname = { [Op.like]: `%${req.query.customer_nickname}%` };
+    }
+    
+    // 新增：基于角色的权限控制
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    console.log(`用户权限控制 - 角色: ${userRole}, 用户ID: ${userId}`);
+    
+    if (userRole === 'service') {
+      // 客服只能查看自己登记的线索
+      where.follow_up_person = userId.toString();
+      console.log('权限控制: 客服用户，只能查看自己登记的线索');
+    } else if (userRole === 'sales') {
+      // 销售只能查看分配给自己的线索
+      where.current_follower = userId;
+      console.log('权限控制: 销售用户，只能查看分配给自己的线索');
+    } else if (userRole === 'admin') {
+      // 管理员可以查看所有线索
+      console.log('权限控制: 管理员用户，可以查看所有线索');
+    } else {
+      // 其他角色默认只能查看自己登记的线索
+      where.follow_up_person = userId.toString();
+      console.log('权限控制: 其他角色用户，只能查看自己登记的线索');
     }
     
     const offset = (page - 1) * page_size;
@@ -376,9 +405,46 @@ exports.getLeadDetail = async (req, res) => {
       });
     }
     
+    // 新增：权限控制检查
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    const leadData = lead.toJSON();
+    
+    console.log(`线索详情权限检查 - 角色: ${userRole}, 用户ID: ${userId}, 线索ID: ${id}`);
+    
+    let hasPermission = false;
+    
+    if (userRole === 'admin') {
+      // 管理员可以查看所有线索
+      hasPermission = true;
+      console.log('权限检查: 管理员用户，允许访问');
+    } else if (userRole === 'service') {
+      // 客服只能查看自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else if (userRole === 'sales') {
+      // 销售只能查看分配给自己的线索
+      hasPermission = leadData.current_follower === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else {
+      // 其他角色默认只能查看自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    }
+    
+    if (!hasPermission) {
+      return res.status(403).json({ 
+        success: false, 
+        message: '您没有权限查看该线索',
+        performance: {
+          totalTime: `${totalTime}ms`,
+          dbTime: `${dbTime}ms`
+        }
+      });
+    }
+    
     // 处理返回数据，动态判断need_followup
     const now = dayjs();
-    const leadData = lead.toJSON();
     const latestFollowUp = leadData.followUps && leadData.followUps.length > 0
       ? leadData.followUps[0]
       : null;
@@ -465,6 +531,59 @@ exports.updateLead = async (req, res) => {
     transaction = await CustomerLead.sequelize.transaction();
     
     const dbStartTime = Date.now();
+    
+    // 新增：权限控制检查
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    console.log(`编辑线索权限检查 - 角色: ${userRole}, 用户ID: ${userId}, 线索ID: ${id}`);
+    
+    // 先查询线索信息进行权限检查
+    const existingLead = await CustomerLead.findByPk(id, { transaction });
+    if (!existingLead) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(404).json({ 
+        success: false, 
+        message: '未找到该线索',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    const leadData = existingLead.toJSON();
+    let hasPermission = false;
+    
+    if (userRole === 'admin') {
+      // 管理员可以编辑所有线索
+      hasPermission = true;
+      console.log('权限检查: 管理员用户，允许编辑');
+    } else if (userRole === 'service') {
+      // 客服只能编辑自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else if (userRole === 'sales') {
+      // 销售只能编辑分配给自己的线索
+      hasPermission = leadData.current_follower === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else {
+      // 其他角色默认只能编辑自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    }
+    
+    if (!hasPermission) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(403).json({ 
+        success: false, 
+        message: '您没有权限编辑该线索',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
     
     // 1. 更新线索记录
     // 新增：如果请求包含end_followup=1，则自动将need_followup设为0
@@ -614,6 +733,60 @@ exports.deleteLead = async (req, res) => {
     }
     // 初始化事务
     transaction = await CustomerLead.sequelize.transaction();
+    
+    // 新增：权限控制检查
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    console.log(`删除线索权限检查 - 角色: ${userRole}, 用户ID: ${userId}, 线索ID: ${id}`);
+    
+    // 先查询线索信息进行权限检查
+    const existingLead = await CustomerLead.findByPk(id, { transaction });
+    if (!existingLead) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(404).json({ 
+        success: false, 
+        message: '未找到该线索',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    const leadData = existingLead.toJSON();
+    let hasPermission = false;
+    
+    if (userRole === 'admin') {
+      // 管理员可以删除所有线索
+      hasPermission = true;
+      console.log('权限检查: 管理员用户，允许删除');
+    } else if (userRole === 'service') {
+      // 客服只能删除自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else if (userRole === 'sales') {
+      // 销售只能删除分配给自己的线索
+      hasPermission = leadData.current_follower === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else {
+      // 其他角色默认只能删除自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    }
+    
+    if (!hasPermission) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(403).json({ 
+        success: false, 
+        message: '您没有权限删除该线索',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
     const dbStartTime = Date.now();
     // 1. 先删除关联的跟进记录
     const deletedFollowUps = await FollowUpRecord.destroy({

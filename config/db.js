@@ -24,23 +24,12 @@ const sequelize = new Sequelize(
     },
     dialectOptions: {
       connectTimeout: 60000,    // 连接超时
-      acquireTimeout: 60000,    // 获取连接超时
-      timeout: 60000,           // 查询超时
       charset: 'utf8mb4',       // 字符集
       supportBigNumbers: true,  // 支持大数字
       bigNumberStrings: true,   // 大数字转字符串
       // 连接保活设置
       keepAlive: true,
-      keepAliveInitialDelay: 0,
-      // 自动重连设置
-      reconnect: true,
-      // 连接池设置
-      connectionLimit: 20,
-      queueLimit: 0
-    },
-    // 查询超时设置
-    query: {
-      timeout: 60000
+      keepAliveInitialDelay: 0
     }
   }
 );

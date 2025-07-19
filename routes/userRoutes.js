@@ -8,8 +8,8 @@ router.post('/register', userController.register);
 router.post('/login', userController.login);
 // 用户列表
 router.get('/', userController.list);
-// 获取所有客服用户
-router.get('/service', userController.listServiceUsers);
+// 获取所有销售用户
+router.get('/sales', userController.listSalesUsers);
 // 用户详情
 router.get('/:id', userController.detail);
 // 修改用户
