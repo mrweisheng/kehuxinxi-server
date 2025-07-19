@@ -4,6 +4,7 @@ function initializeAssociations() {
   const CustomerLead = require('../models/leadModel');
   const FollowUpRecord = require('../models/followupModel');
   const OperationLog = require('../models/logModel');
+  const User = require('../models/user');
 
   // 建立关联关系
   // CustomerLead 和 FollowUpRecord 的一对多关系
@@ -18,6 +19,21 @@ function initializeAssociations() {
     foreignKey: 'lead_id',
     as: 'lead',
     onDelete: 'CASCADE',
+    onUpdate: 'CASCADE'
+  });
+
+  // FollowUpRecord 和 User 的关联关系
+  FollowUpRecord.belongsTo(User, {
+    foreignKey: 'follow_up_person_id',
+    as: 'followUpPerson',
+    onDelete: 'RESTRICT',
+    onUpdate: 'CASCADE'
+  });
+
+  User.hasMany(FollowUpRecord, {
+    foreignKey: 'follow_up_person_id',
+    as: 'followUpRecords',
+    onDelete: 'RESTRICT',
     onUpdate: 'CASCADE'
   });
 

@@ -33,10 +33,10 @@ const FollowUpRecord = sequelize.define('follow_up_records', {
     allowNull: true,
     comment: '跟进结果/状态'
   },
-  follow_up_person: {
-    type: DataTypes.STRING(50),
+  follow_up_person_id: {
+    type: DataTypes.INTEGER,
     allowNull: false,
-    comment: '跟进人'
+    comment: '跟进人用户ID'
   },
   created_at: {
     type: DataTypes.DATE,
@@ -63,6 +63,12 @@ FollowUpRecord.associate = (models) => {
   FollowUpRecord.belongsTo(models.CustomerLead, {
     foreignKey: 'lead_id',
     as: 'lead'
+  });
+  
+  // 添加与用户表的关联
+  FollowUpRecord.belongsTo(models.User, {
+    foreignKey: 'follow_up_person_id',
+    as: 'followUpPerson'
   });
 };
 

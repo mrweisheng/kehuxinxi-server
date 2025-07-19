@@ -1,4 +1,5 @@
 const FollowUpRecord = require('../models/followupModel');
+const User = require('../models/user');
 const { updateNeedFollowupByLeadId } = require('../services/followupRemindChecker');
 
 // 验证跟进记录数据
@@ -9,7 +10,7 @@ function validateFollowUpData(data) {
     'follow_up_method',
     'follow_up_content',
     'follow_up_result',
-    'follow_up_person'
+    'follow_up_person_id'
   ];
   
   const missingFields = requiredFields.filter(field => !data[field]);
@@ -29,6 +30,14 @@ function validateFollowUpData(data) {
     };
   }
   
+  // 验证follow_up_person_id是否为数字
+  if (isNaN(Number(data.follow_up_person_id))) {
+    return {
+      valid: false,
+      message: 'follow_up_person_id必须是有效的用户ID'
+    };
+  }
+  
   return { valid: true };
 }
 
@@ -37,6 +46,9 @@ exports.createFollowUp = async (req, res) => {
   const startTime = Date.now();
   try {
     const data = req.body;
+    
+    // 自动填充当前用户ID
+    data.follow_up_person_id = req.user.id;
     
     // 参数验证
     const validation = validateFollowUpData(data);
@@ -127,8 +139,12 @@ exports.getFollowUps = async (req, res) => {
     const dbStartTime = Date.now();
     const list = await FollowUpRecord.findAll({
       where: { lead_id },
-      order: [['follow_up_time', 'DESC']],
-      raw: true // 返回纯净的业务数据，不包含Sequelize内部属性
+      include: [{
+        model: User,
+        as: 'followUpPerson',
+        attributes: ['id', 'nickname']
+      }],
+      order: [['follow_up_time', 'DESC']]
     });
     const dbEndTime = Date.now();
     
@@ -139,7 +155,7 @@ exports.getFollowUps = async (req, res) => {
     
     res.json({ 
       success: true, 
-      list,
+      list: list.map(item => item.toJSON()),
       performance: {
         totalTime: `${totalTime}ms`,
         dbTime: `${dbTime}ms`
@@ -180,8 +196,12 @@ exports.getFollowUpsByLeadId = async (req, res) => {
     const dbStartTime = Date.now();
     const list = await FollowUpRecord.findAll({
       where: { lead_id: leadId },
-      order: [['follow_up_time', 'DESC']],
-      raw: true // 返回纯净的业务数据，不包含Sequelize内部属性
+      include: [{
+        model: User,
+        as: 'followUpPerson',
+        attributes: ['id', 'nickname']
+      }],
+      order: [['follow_up_time', 'DESC']]
     });
     const dbEndTime = Date.now();
     
@@ -192,7 +212,7 @@ exports.getFollowUpsByLeadId = async (req, res) => {
     
     res.json({ 
       success: true, 
-      list,
+      list: list.map(item => item.toJSON()),
       performance: {
         totalTime: `${totalTime}ms`,
         dbTime: `${dbTime}ms`
