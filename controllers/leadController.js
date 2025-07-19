@@ -4,6 +4,7 @@ const FollowupRemindConfig = require('../models/followupRemindConfig');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const { updateNeedFollowupByLeadId } = require('../services/followupRemindChecker');
+const User = require('../models/user');
 
 // 验证必填字段
 function validateLeadData(data) {
@@ -121,7 +122,7 @@ exports.createLead = async (req, res) => {
         follow_up_method: '首次联系', // 默认跟进方式
         follow_up_content: data.follow_up_content, // 用户必须提供的跟进内容
         follow_up_result: '待跟进', // 默认跟进结果
-        follow_up_person: data.follow_up_person
+        follow_up_person_id: data.follow_up_person
       };
       
       followUp = await FollowUpRecord.create(followUpData, { transaction });
@@ -255,10 +256,15 @@ exports.getLeads = async (req, res) => {
         {
           model: FollowUpRecord,
           as: 'followUps',
-          attributes: ['follow_up_time', 'follow_up_content'],
+          attributes: ['follow_up_time', 'follow_up_content', 'follow_up_person_id'],
           separate: true,
           order: [['follow_up_time', 'DESC']],
-          limit: 1
+          limit: 1,
+          include: [{
+            model: User,
+            as: 'followUpPerson',
+            attributes: ['id', 'nickname']
+          }]
         }
       ]
     });
@@ -288,7 +294,7 @@ exports.getLeads = async (req, res) => {
     
     res.json({ 
       success: true, 
-      total: count, 
+      total: count,
       list: processedRows,
       performance: {
         totalTime: `${totalTime}ms`,
@@ -341,10 +347,15 @@ exports.getLeadDetail = async (req, res) => {
         {
           model: FollowUpRecord,
           as: 'followUps',
-          attributes: ['follow_up_time', 'follow_up_content'],
+          attributes: ['follow_up_time', 'follow_up_content', 'follow_up_person_id'],
           separate: true,
           order: [['follow_up_time', 'DESC']],
-          limit: 1
+          limit: 1,
+          include: [{
+            model: User,
+            as: 'followUpPerson',
+            attributes: ['id', 'nickname']
+          }]
         }
       ]
     });
@@ -509,7 +520,7 @@ exports.updateLead = async (req, res) => {
         follow_up_method: data.follow_up_method || '编辑跟进', // 跟进方式
         follow_up_content: data.follow_up_content, // 跟进内容
         follow_up_result: data.follow_up_result || '待跟进', // 跟进结果
-        follow_up_person: req.user.id // 自动填充为当前登录用户ID
+        follow_up_person_id: req.user.id // 自动填充为当前登录用户ID
       };
       
       followUp = await FollowUpRecord.create(followUpData, { transaction });

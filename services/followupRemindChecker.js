@@ -8,15 +8,34 @@ const { sendMail } = require('../utils/emailSender');
 const cron = require('node-cron');
 const dotenv = require('dotenv');
 dotenv.config();
+const User = require('../models/user');
 
 // 检查所有意向级别的超期线索并发送邮件
 async function checkOverdueLeads() {
+  let transaction;
   try {
-    const configs = await FollowupRemindConfig.findAll();
-    const emailRecords = await RemindEmailList.findAll();
+    console.log('🔄 开始检查超期线索...');
+    
+    // 获取数据库连接
+    const sequelize = require('../config/db');
+    
+    // 检查数据库连接
+    try {
+      await sequelize.authenticate();
+      console.log('✅ 数据库连接正常');
+    } catch (dbError) {
+      console.error('❌ 数据库连接失败，跳过本次检查:', dbError.message);
+      return [];
+    }
+    
+    transaction = await sequelize.transaction();
+    
+    const configs = await FollowupRemindConfig.findAll({ transaction });
+    const emailRecords = await RemindEmailList.findAll({ transaction });
     
     if (emailRecords.length === 0) {
-      console.log('没有配置收件人邮箱，跳过邮件发送');
+      console.log('⚠️ 没有配置收件人邮箱，跳过邮件发送');
+      await transaction.commit();
       return [];
     }
     
@@ -24,72 +43,123 @@ async function checkOverdueLeads() {
     const now = dayjs();
     
     // 先将所有未终结线索的need_followup重置为0
-    await CustomerLead.update({ need_followup: 0 }, { where: { end_followup: 0 } });
+    await CustomerLead.update({ need_followup: 0 }, { 
+      where: { end_followup: 0 },
+      transaction 
+    });
+    
     let overdueList = [];
 
     for (const config of configs) {
-      // 查找该意向级别所有线索及其最新跟进时间
-      const leads = await CustomerLead.findAll({
-        where: { intention_level: config.intention_level, end_followup: 0 },
-        attributes: ['id', 'customer_nickname', 'intention_level', 'lead_time', 'follow_up_person', 'contact_account'],
-        include: [{
-          model: FollowUpRecord,
-          as: 'followUps',
-          attributes: ['follow_up_time', 'follow_up_content'],
-          separate: true,
-          order: [['follow_up_time', 'DESC']],
-          limit: 1
-        }]
-      });
-      
-      for (const lead of leads) {
-        const leadData = lead.toJSON();
-        const lastFollowUpObj = leadData.followUps && leadData.followUps.length > 0 ? leadData.followUps[0] : null;
-        const lastFollowUp = lastFollowUpObj ? lastFollowUpObj.follow_up_time : null;
-        const lastFollowUpContent = lastFollowUpObj ? lastFollowUpObj.follow_up_content : null;
-        const lastTime = lastFollowUp ? dayjs(lastFollowUp) : dayjs(leadData.lead_time);
-        const diffDays = now.diff(lastTime, 'day');
+      try {
+        // 查找该意向级别所有线索及其最新跟进时间
+        const leads = await CustomerLead.findAll({
+          where: { intention_level: config.intention_level, end_followup: 0 },
+          attributes: ['id', 'customer_nickname', 'intention_level', 'lead_time', 'follow_up_person', 'contact_account'],
+          include: [{
+            model: FollowUpRecord,
+            as: 'followUps',
+            attributes: ['follow_up_time', 'follow_up_content', 'follow_up_person_id'],
+            separate: true,
+            order: [['follow_up_time', 'DESC']],
+            limit: 1,
+            include: [{
+              model: User,
+              as: 'followUpPerson',
+              attributes: ['id', 'nickname']
+            }]
+          }],
+          transaction
+        });
         
-        if (diffDays >= config.interval_days) {
-          overdueList.push({
-            lead_id: leadData.id,
-            customer_nickname: leadData.customer_nickname,
-            intention_level: leadData.intention_level,
-            last_follow_up_time: lastFollowUp || leadData.lead_time,
-            last_follow_up_content: lastFollowUpContent,
-            contact_account: leadData.contact_account,
-            follow_up_person: leadData.follow_up_person,
-            overdue_days: diffDays,
-            config_days: config.interval_days,
-            email_list: globalEmailList
-          });
+        console.log(`📊 检查 ${config.intention_level} 意向等级，找到 ${leads.length} 条线索`);
+        
+        for (const lead of leads) {
+          try {
+            const leadData = lead.toJSON();
+            const lastFollowUpObj = leadData.followUps && leadData.followUps.length > 0 ? leadData.followUps[0] : null;
+            const lastFollowUp = lastFollowUpObj ? lastFollowUpObj.follow_up_time : null;
+            const lastFollowUpContent = lastFollowUpObj ? lastFollowUpObj.follow_up_content : null;
+            const lastTime = lastFollowUp ? dayjs(lastFollowUp) : dayjs(leadData.lead_time);
+            const diffDays = now.diff(lastTime, 'day');
+            
+            if (diffDays >= config.interval_days) {
+              overdueList.push({
+                lead_id: leadData.id,
+                customer_nickname: leadData.customer_nickname,
+                intention_level: leadData.intention_level,
+                last_follow_up_time: lastFollowUp || leadData.lead_time,
+                last_follow_up_content: lastFollowUpContent,
+                contact_account: leadData.contact_account,
+                follow_up_person: leadData.follow_up_person,
+                overdue_days: diffDays,
+                config_days: config.interval_days,
+                email_list: globalEmailList
+              });
+            }
+          } catch (leadError) {
+            console.error(`❌ 处理线索 ${lead.id} 时出错:`, leadError.message);
+            continue; // 跳过这条线索，继续处理其他线索
+          }
         }
+      } catch (configError) {
+        console.error(`❌ 处理 ${config.intention_level} 意向等级时出错:`, configError.message);
+        continue; // 跳过这个意向等级，继续处理其他等级
       }
     }
     
     // 对所有超期线索批量设置need_followup=1
     const overdueIds = overdueList.map(item => item.lead_id);
     if (overdueIds.length > 0) {
-      await CustomerLead.update({ need_followup: 1 }, { where: { id: overdueIds } });
+      await CustomerLead.update({ need_followup: 1 }, { 
+        where: { id: overdueIds },
+        transaction 
+      });
+      console.log(`✅ 已标记 ${overdueIds.length} 条超期线索`);
     }
+
+    // 提交事务
+    await transaction.commit();
 
     // 如果有超期线索，发送邮件提醒
     if (overdueList.length > 0) {
       try {
         await sendOverdueRemindEmail(overdueList, globalEmailList);
-        console.log(`发现 ${overdueList.length} 条超期线索，已发送邮件提醒`);
-      } catch (e) {
-        console.error('发送超期提醒邮件失败:', e);
+        console.log(`📧 发现 ${overdueList.length} 条超期线索，已发送邮件提醒`);
+      } catch (emailError) {
+        console.error('❌ 发送超期提醒邮件失败:', emailError.message);
         // 邮件失败不影响主流程
       }
     } else {
-      console.log('无超期线索');
+      console.log('✅ 无超期线索');
     }
     
+    console.log('✅ 超期线索检查完成');
     return overdueList;
+    
   } catch (error) {
-    console.error('检查超期线索时出错:', error);
+    if (transaction) {
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        console.error('❌ 事务回滚失败:', rollbackError.message);
+      }
+    }
+    
+    console.error('❌ 检查超期线索时出错:', error.message);
+    
+    // 如果是连接错误，记录详细信息
+    if (error.name === 'SequelizeConnectionError') {
+      console.error('🔗 数据库连接错误详情:', {
+        code: error.parent?.code,
+        errno: error.parent?.errno,
+        sqlState: error.parent?.sqlState,
+        sqlMessage: error.parent?.sqlMessage
+      });
+    }
+    
     // 不再throw，避免服务崩溃
+    return [];
   }
 }
 
