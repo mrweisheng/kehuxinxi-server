@@ -52,6 +52,12 @@ function initializeAssociations() {
     onUpdate: 'CASCADE'
   });
 
+  // CustomerLead 和 User 的当前跟进人关联
+  CustomerLead.belongsTo(User, {
+    foreignKey: 'current_follower',
+    as: 'currentFollowerUser'
+  });
+
   console.log('模型关联关系初始化完成');
 }
 
