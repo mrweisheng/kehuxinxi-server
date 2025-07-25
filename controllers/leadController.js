@@ -294,6 +294,11 @@ exports.getLeads = async (req, res) => {
             as: 'followUpPerson',
             attributes: ['id', 'nickname']
           }]
+        },
+        {
+          model: User,
+          as: 'currentFollowerUser',
+          attributes: ['id', 'nickname', 'username']
         }
       ]
     });
@@ -306,11 +311,19 @@ exports.getLeads = async (req, res) => {
         : null;
       return {
         ...leadData,
+        current_follower: leadData.currentFollowerUser
+          ? {
+              id: leadData.currentFollowerUser.id,
+              nickname: leadData.currentFollowerUser.nickname,
+              username: leadData.currentFollowerUser.username
+            }
+          : null,
         latest_follow_up: latestFollowUp ? {
           follow_up_time: latestFollowUp.follow_up_time,
           follow_up_content: latestFollowUp.follow_up_content
         } : null,
-        followUps: undefined
+        followUps: undefined,
+        currentFollowerUser: undefined
       };
     });
     

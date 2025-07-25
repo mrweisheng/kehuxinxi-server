@@ -110,6 +110,11 @@ CustomerLead.associate = (models) => {
     foreignKey: 'lead_id',
     as: 'followUps'
   });
+  // 新增：当前跟进人用户信息关联
+  CustomerLead.belongsTo(models.User, {
+    foreignKey: 'current_follower',
+    as: 'currentFollowerUser'
+  });
 };
 
 module.exports = CustomerLead; 
