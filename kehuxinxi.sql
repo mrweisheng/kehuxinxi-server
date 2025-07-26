@@ -11,7 +11,7 @@
  Target Server Version : 80042 (8.0.42-0ubuntu0.24.04.1)
  File Encoding         : 65001
 
- Date: 19/07/2025 15:51:29
+ Date: 26/07/2025 14:29:52
 */
 
 SET NAMES utf8mb4;
@@ -39,8 +39,12 @@ CREATE TABLE `customer_leads`  (
   `end_followup` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否终结跟进（1=终结，0=未终结）',
   `end_followup_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '终结跟进原因',
   `current_follower` int NULL DEFAULT NULL COMMENT '当前跟进人用户ID',
-  PRIMARY KEY (`id`) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 42 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_updated_at`(`updated_at` ASC) USING BTREE,
+  INDEX `idx_need_followup_lead_time`(`need_followup` ASC, `lead_time` ASC) USING BTREE,
+  INDEX `idx_follow_up_person`(`follow_up_person` ASC) USING BTREE,
+  INDEX `idx_current_follower`(`current_follower` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 57 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for follow_up_records
@@ -57,9 +61,10 @@ CREATE TABLE `follow_up_records`  (
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `follow_up_person_id` int NOT NULL,
   PRIMARY KEY (`id`) USING BTREE,
-  INDEX `lead_id`(`lead_id` ASC) USING BTREE,
+  INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
+  INDEX `idx_lead_id_follow_up_time`(`lead_id` ASC, `follow_up_time` ASC) USING BTREE,
   CONSTRAINT `follow_up_records_ibfk_1` FOREIGN KEY (`lead_id`) REFERENCES `customer_leads` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 67 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 103 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for followup_remind_config
