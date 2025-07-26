@@ -1,6 +1,6 @@
 const CustomerLead = require('../models/leadModel');
 const FollowUpRecord = require('../models/followupModel');
-const { Op, fn, col } = require('sequelize');
+const { Op, fn, col, QueryTypes } = require('sequelize');
 
 // 工具函数：格式化日期为 yyyy-MM-dd HH:mm:ss
 function formatDate(date, end = false) {
@@ -21,86 +21,80 @@ exports.getLeadsOverview = async (req, res) => {
     const dbStartTime = Date.now();
     // 1. 总线索数量
     const totalLeads = await CustomerLead.count({ raw: true });
-    // 2. 各意向等级分布
-    const intentionDistribution = await CustomerLead.findAll({
-      attributes: [
-        'intention_level',
-        [CustomerLead.sequelize.fn('COUNT', '*'), 'count']
-      ],
-      group: ['intention_level'],
-      raw: true
-    });
-    // 3. 各来源平台分布
-    const platformDistribution = await CustomerLead.findAll({
-      attributes: [
-        'source_platform',
-        [CustomerLead.sequelize.fn('COUNT', '*'), 'count']
-      ],
-      group: ['source_platform'],
-      raw: true
-    });
-    // 4. 今日新增线索数（以lead_time为准）
+
+    // 2. 时间变量声明
     const today = new Date();
     const todayStartStr = formatDate(today, false);
     const todayEndStr = formatDate(today, true);
-    const todayLeads = await CustomerLead.count({
-      where: {
-        lead_time: {
-          [Op.gte]: todayStartStr,
-          [Op.lte]: todayEndStr
-        }
-      },
-      raw: true
-    });
-    // 5. 本周新增线索数（以lead_time为准，周一为一周开始）
     const dayOfWeek = today.getDay() === 0 ? 7 : today.getDay(); // 周日为7
     const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - dayOfWeek + 1);
     const weekStartStr = formatDate(weekStart, false);
     const weekEndStr = formatDate(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6), true);
-    const thisWeekLeads = await CustomerLead.count({
-      where: {
-        lead_time: {
-          [Op.gte]: weekStartStr,
-          [Op.lte]: weekEndStr
-        }
-      },
-      raw: true
-    });
-    // 6. 本月新增线索数（以lead_time为准）
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
     const monthStartStr = formatDate(monthStart, false);
     const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
     const monthEndStr = formatDate(monthEnd, true);
-    const thisMonthLeads = await CustomerLead.count({
-      where: {
-        lead_time: {
-          [Op.gte]: monthStartStr,
-          [Op.lte]: monthEndStr
-        }
+
+    // 3. intention_distribution、platform_distribution、recent_additions 合并SQL
+    const statsRows = await CustomerLead.sequelize.query(`
+      SELECT
+        intention_level,
+        source_platform,
+        COUNT(*) AS count,
+        SUM(CASE WHEN lead_time >= :todayStart AND lead_time <= :todayEnd THEN 1 ELSE 0 END) AS today,
+        SUM(CASE WHEN lead_time >= :weekStart AND lead_time <= :weekEnd THEN 1 ELSE 0 END) AS this_week,
+        SUM(CASE WHEN lead_time >= :monthStart AND lead_time <= :monthEnd THEN 1 ELSE 0 END) AS this_month
+      FROM customer_leads
+      GROUP BY intention_level, source_platform
+    `, {
+      replacements: {
+        todayStart: todayStartStr,
+        todayEnd: todayEndStr,
+        weekStart: weekStartStr,
+        weekEnd: weekEndStr,
+        monthStart: monthStartStr,
+        monthEnd: monthEndStr
       },
-      raw: true
+      type: QueryTypes.SELECT
     });
-    // 7. 最近15天每一天的线索数量（以lead_time为准）
+    // 4. intention_distribution、platform_distribution、recent_additions 变量聚合
+    const intentionStats = {};
+    const platformStats = {};
+    let todayLeads = 0, thisWeekLeads = 0, thisMonthLeads = 0;
+    statsRows.forEach(row => {
+      if (row.intention_level) {
+        intentionStats[row.intention_level] = (intentionStats[row.intention_level] || 0) + parseInt(row.count);
+      }
+      if (row.source_platform) {
+        platformStats[row.source_platform] = (platformStats[row.source_platform] || 0) + parseInt(row.count);
+      }
+      todayLeads += parseInt(row.today);
+      thisWeekLeads += parseInt(row.this_week);
+      thisMonthLeads += parseInt(row.this_month);
+    });
+
+    // 5. 最近15天每一天的线索数量（以lead_time为准）
+    const last15Start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 14);
+    const last15StartStr = formatDate(last15Start, false);
+    const last15DaysRaw = await CustomerLead.sequelize.query(
+      `SELECT DATE(lead_time) AS date, COUNT(*) AS count FROM customer_leads WHERE lead_time >= :startDate GROUP BY DATE(lead_time) ORDER BY date ASC`,
+      {
+        replacements: { startDate: last15StartStr },
+        type: QueryTypes.SELECT
+      }
+    );
     const last15Days = [];
     for (let i = 14; i >= 0; i--) {
       const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
-      const dayStartStr = formatDate(date, false);
-      const dayEndStr = formatDate(date, true);
-      const dayCount = await CustomerLead.count({
-        where: {
-          lead_time: {
-            [Op.gte]: dayStartStr,
-            [Op.lte]: dayEndStr
-          }
-        },
-        raw: true
-      });
+      const dateStr = formatDate(date, false).slice(0, 10);
+      const found = last15DaysRaw.find(item => item.date === dateStr);
       last15Days.push({
-        date: dayStartStr.slice(0, 10), // YYYY-MM-DD
-        count: dayCount
+        date: dateStr,
+        count: found ? found.count : 0
       });
     }
-    // 8. 本周跟进统计（以follow_up_time为准，周一到周日）
+
+    // 6. 本周跟进统计（以follow_up_time为准，周一到周日）
     const followupWeekLeadCount = await FollowUpRecord.count({
       where: {
         follow_up_time: {
@@ -121,19 +115,42 @@ exports.getLeadsOverview = async (req, res) => {
       },
       raw: true
     });
+
+    // 7. 今日统计
+    const todayFollowedLeads = await FollowUpRecord.aggregate('lead_id', 'count', {
+      distinct: true,
+      where: {
+        created_at: {
+          [Op.gte]: todayStartStr,
+          [Op.lte]: todayEndStr
+        }
+      }
+    });
+    const todayFollowupRecords = await FollowUpRecord.count({
+      where: {
+        created_at: {
+          [Op.gte]: todayStartStr,
+          [Op.lte]: todayEndStr
+        }
+      }
+    });
+    const todayEndedLeads = await CustomerLead.count({
+      where: {
+        end_followup: 1,
+        updated_at: {
+          [Op.gte]: todayStartStr,
+          [Op.lte]: todayEndStr
+        }
+      }
+    });
+
+    // 8. 性能统计
     const dbEndTime = Date.now();
-    // 处理统计数据格式
-    const intentionStats = {};
-    intentionDistribution.forEach(item => {
-      intentionStats[item.intention_level] = parseInt(item.count);
-    });
-    const platformStats = {};
-    platformDistribution.forEach(item => {
-      platformStats[item.source_platform] = parseInt(item.count);
-    });
     const totalTime = Date.now() - startTime;
     const dbTime = dbEndTime - dbStartTime;
     console.log(`获取线索统计概览完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms`);
+
+    // 9. 返回结构
     res.json({
       success: true,
       data: {
@@ -149,6 +166,11 @@ exports.getLeadsOverview = async (req, res) => {
         followup: {
           this_week_lead_count: followupWeekLeadCount,
           this_week_record_count: followupWeekRecordCount
+        },
+        today_stats: {
+          followed_leads: todayFollowedLeads,
+          followup_records: todayFollowupRecords,
+          ended_leads: todayEndedLeads
         }
       },
       performance: {
@@ -156,15 +178,12 @@ exports.getLeadsOverview = async (req, res) => {
         dbTime: `${dbTime}ms`
       }
     });
-  } catch (err) {
-    const totalTime = Date.now() - startTime;
-    console.error(`获取线索统计概览出错 - 总耗时: ${totalTime}ms`, err);
+  } catch (error) {
+    console.error('获取线索统计概览失败:', error);
     res.status(500).json({
       success: false,
-      message: err.message,
-      performance: {
-        totalTime: `${totalTime}ms`
-      }
+      message: '获取线索统计概览失败',
+      error: error.message
     });
   }
-}; 
+};

@@ -749,6 +749,11 @@ GET /api/statistics/leads-overview
     "followup": {
       "this_week_lead_count": 12,   // 本周被跟进的线索数（去重）
       "this_week_record_count": 30  // 本周跟进记录总数
+    },
+    "today_stats": {
+      "followed_leads": 2,      // 今日有跟进动作的线索数（去重，按 follow_up_records.created_at）
+      "followup_records": 3,    // 今日新建的跟进记录数（按 follow_up_records.created_at）
+      "ended_leads": 1          // 今日被终结的线索数（customer_leads.end_followup=1 且 updated_at为当天）
     }
   },
   "performance": {
@@ -781,6 +786,11 @@ GET /api/statistics/leads-overview
 - followup: 跟进统计
   - this_week_lead_count: 本周被跟进的线索数（去重，周一到周日）
   - this_week_record_count: 本周跟进记录总数（周一到周日）
+- today_stats: 今日业务动作统计（对象）
+  - followed_leads: 今日有跟进动作的线索数（去重，按 follow_up_records.created_at）
+  - followup_records: 今日新建的跟进记录数（按 follow_up_records.created_at）
+  - ended_leads: 今日被终结的线索数（customer_leads.end_followup=1 且 updated_at为当天）
+- 其他统计字段口径未变。
 
 ============================
 6. 跟进超期提醒收件人邮箱（remind_email_list）
