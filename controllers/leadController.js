@@ -283,32 +283,50 @@ exports.getLeads = async (req, res) => {
       ],
       include: [
         {
-          model: FollowUpRecord,
-          as: 'followUps',
-          attributes: ['follow_up_time', 'follow_up_content', 'follow_up_person_id'],
-          separate: true,
-          order: [['follow_up_time', 'DESC']],
-          limit: 1,
-          include: [{
-            model: User,
-            as: 'followUpPerson',
-            attributes: ['id', 'nickname']
-          }]
-        },
-        {
           model: User,
           as: 'currentFollowerUser',
           attributes: ['id', 'nickname', 'username']
         }
       ]
     });
-    
+
+    // 批量查询最新跟进记录，避免 N+1 查询
+    const leadIds = rows.map(lead => lead.id);
+    const latestFollowUps = await FollowUpRecord.findAll({
+      attributes: [
+        'lead_id',
+        'follow_up_time',
+        'follow_up_content',
+        'follow_up_person_id'
+      ],
+      where: {
+        lead_id: { [Op.in]: leadIds }
+      },
+      include: [{
+        model: User,
+        as: 'followUpPerson',
+        attributes: ['id', 'nickname']
+      }],
+      order: [['follow_up_time', 'DESC']],
+      // 移除 group: ['lead_id']，改用子查询方式
+      raw: true,
+      nest: true
+    });
+
+    // 构建跟进记录映射，手动取每个线索的最新记录
+    const followUpMap = {};
+    latestFollowUps.forEach(followUp => {
+      // 如果该线索还没有记录，或者当前记录更新，则更新映射
+      if (!followUpMap[followUp.lead_id] || 
+          new Date(followUp.follow_up_time) > new Date(followUpMap[followUp.lead_id].follow_up_time)) {
+        followUpMap[followUp.lead_id] = followUp;
+      }
+    });
+
     // 直接返回数据库 need_followup 字段
     const processedRows = rows.map(lead => {
       const leadData = lead.toJSON();
-      const latestFollowUp = leadData.followUps && leadData.followUps.length > 0
-        ? leadData.followUps[0]
-        : null;
+      const latestFollowUp = followUpMap[leadData.id];
       return {
         ...leadData,
         current_follower: leadData.currentFollowerUser
@@ -322,7 +340,6 @@ exports.getLeads = async (req, res) => {
           follow_up_time: latestFollowUp.follow_up_time,
           follow_up_content: latestFollowUp.follow_up_content
         } : null,
-        followUps: undefined,
         currentFollowerUser: undefined
       };
     });
