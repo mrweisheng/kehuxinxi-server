@@ -28,6 +28,11 @@ const CustomerLead = sequelize.define('customer_leads', {
     allowNull: false,
     comment: '客户联系方式（手机号、微信号等）'
   },
+  contact_name: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    comment: '联系名称（联系客户时给客户的名称备注）'
+  },
   lead_time: {
     type: DataTypes.STRING(19),
     allowNull: false,

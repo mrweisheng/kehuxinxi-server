@@ -207,6 +207,7 @@ POST /api/leads
   "source_platform": "抖音",
   "source_account": "douyin123",
   "contact_account": "13800000000",
+  "contact_name": "王总", // 可选，联系客户时给客户的名称备注
   "lead_time": "2024-06-01 10:00:00",
   "is_contacted": 1,
   "intention_level": "高",
@@ -262,10 +263,11 @@ GET /api/leads
 | intention_level    | string  | 否   | 意向等级（高/中/低）         |
 | is_deal            | int     | 否   | 是否成交（0/1）              |
 | is_contacted       | int     | 否   | 是否联系上（0/1）            |
-| keyword            | string  | 否   | 关键字（客户昵称/联系方式/来源账号模糊搜索） |
+| keyword            | string  | 否   | 关键字（客户昵称/联系方式/来源账号/联系名称模糊搜索） |
 | date_from          | string  | 否   | 起始时间（yyyy-MM-dd）       |
 | date_to            | string  | 否   | 结束时间（yyyy-MM-dd）       |
 | customer_nickname  | string  | 否   | 客户昵称模糊搜索             |
+| contact_name       | string  | 否   | 联系名称模糊搜索             |
 
 权限控制说明：
 - admin：返回所有线索
@@ -285,6 +287,7 @@ GET /api/leads
       "source_platform": "抖音", // 来源平台
       "source_account": "douyin123", // 来源账号
       "contact_account": "13800000000", // 客户联系方式
+      "contact_name": "王总", // 联系名称
       "lead_time": "2025-07-19 10:00:00", // 进线索时间
       "is_contacted": 1, // 是否联系上（0=否，1=是）
       "intention_level": "高", // 意向等级
@@ -323,6 +326,7 @@ GET /api/leads
 | source_platform       | string    | 来源平台（如抖音、微信等）                                   |
 | source_account        | string    | 来源账号                                                     |
 | contact_account       | string    | 客户联系方式（手机号、微信号等）                             |
+| contact_name          | string    | 联系名称（联系客户时给客户的名称备注）                       |
 | lead_time             | string    | 进线索时间（yyyy-MM-dd HH:mm:ss）                            |
 | is_contacted          | int       | 是否联系上（0=否，1=是）                                     |
 | intention_level       | string    | 意向等级（高/中/低）                                         |
@@ -397,6 +401,7 @@ PUT /api/leads/:id
   "customer_nickname": "客户昵称",
   "source_platform": "抖音",
   "contact_account": "13800000000",
+  "contact_name": "王总", // 可选，联系客户时给客户的名称备注
   "intention_level": "高",
   "follow_up_person": "张三",
   "is_deal": 1,

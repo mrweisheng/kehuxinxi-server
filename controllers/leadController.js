@@ -204,6 +204,7 @@ exports.getLeads = async (req, res) => {
       is_deal,
       is_contacted,
       keyword,
+      contact_name,
       date_from,
       date_to
     } = req.query;
@@ -227,16 +228,37 @@ exports.getLeads = async (req, res) => {
     if (date_from && date_to) {
       where.lead_time = { [Op.between]: [date_from, date_to] };
     }
-    if (keyword) {
+    const cleanKeyword = typeof keyword === 'string' ? keyword.trim() : '';
+    if (cleanKeyword) {
       where[Op.or] = [
-        { customer_nickname: { [Op.like]: `%${keyword}%` } },
-        { contact_account: { [Op.like]: `%${keyword}%` } },
-        { source_account: { [Op.like]: `%${keyword}%` } }
+        { customer_nickname: { [Op.like]: `%${cleanKeyword}%` } },
+        { contact_account: { [Op.like]: `%${cleanKeyword}%` } },
+        { source_account: { [Op.like]: `%${cleanKeyword}%` } },
+        { 
+          contact_name: { 
+            [Op.and]: [
+              { [Op.ne]: null },
+              { [Op.like]: `%${cleanKeyword}%` }
+            ]
+          } 
+        }
       ];
     }
     // 新增：客户昵称模糊检索
     if (req.query.customer_nickname) {
       where.customer_nickname = { [Op.like]: `%${req.query.customer_nickname}%` };
+    }
+    // 新增：联系名称模糊检索
+    if (req.query.contact_name) {
+      const cleanContactName = req.query.contact_name.trim();
+      if (cleanContactName) {
+        where.contact_name = { 
+          [Op.and]: [
+            { [Op.ne]: null },
+            { [Op.like]: `%${cleanContactName}%` }
+          ]
+        };
+      }
     }
     
     // 新增：基于角色的权限控制
@@ -287,6 +309,26 @@ exports.getLeads = async (req, res) => {
           as: 'currentFollowerUser',
           attributes: ['id', 'nickname', 'username']
         }
+      ],
+      attributes: [
+        'id',
+        'customer_nickname',
+        'source_platform',
+        'source_account',
+        'contact_account',
+        'contact_name',
+        'lead_time',
+        'is_contacted',
+        'intention_level',
+        'follow_up_person',
+        'is_deal',
+        'deal_date',
+        'created_at',
+        'updated_at',
+        'need_followup',
+        'end_followup',
+        'end_followup_reason',
+        'current_follower'
       ]
     });
 
@@ -416,6 +458,26 @@ exports.getLeadDetail = async (req, res) => {
             attributes: ['id', 'nickname']
           }]
         }
+      ],
+      attributes: [
+        'id',
+        'customer_nickname',
+        'source_platform',
+        'source_account',
+        'contact_account',
+        'contact_name',
+        'lead_time',
+        'is_contacted',
+        'intention_level',
+        'follow_up_person',
+        'is_deal',
+        'deal_date',
+        'created_at',
+        'updated_at',
+        'need_followup',
+        'end_followup',
+        'end_followup_reason',
+        'current_follower'
       ]
     });
     
