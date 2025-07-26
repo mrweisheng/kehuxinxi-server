@@ -11,7 +11,7 @@
  Target Server Version : 80042 (8.0.42-0ubuntu0.24.04.1)
  File Encoding         : 65001
 
- Date: 26/07/2025 14:29:52
+ Date: 26/07/2025 15:50:17
 */
 
 SET NAMES utf8mb4;
@@ -27,6 +27,7 @@ CREATE TABLE `customer_leads`  (
   `source_platform` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '客户来源平台（如抖音、微信等）',
   `source_account` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '客户来源账号（如某抖音号、公众号等）',
   `contact_account` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '客户联系方式（手机号、微信号等）',
+  `contact_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '联系名称（联系客户时给客户的名称备注）',
   `lead_time` varchar(19) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '进线索时间',
   `is_contacted` tinyint(1) NOT NULL COMMENT '是否联系上（0=否，1=是）',
   `intention_level` enum('高','中','低') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '意向等级',
@@ -43,8 +44,9 @@ CREATE TABLE `customer_leads`  (
   INDEX `idx_updated_at`(`updated_at` ASC) USING BTREE,
   INDEX `idx_need_followup_lead_time`(`need_followup` ASC, `lead_time` ASC) USING BTREE,
   INDEX `idx_follow_up_person`(`follow_up_person` ASC) USING BTREE,
-  INDEX `idx_current_follower`(`current_follower` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 57 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
+  INDEX `idx_current_follower`(`current_follower` ASC) USING BTREE,
+  INDEX `idx_contact_name`(`contact_name` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 58 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for follow_up_records
@@ -64,7 +66,7 @@ CREATE TABLE `follow_up_records`  (
   INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
   INDEX `idx_lead_id_follow_up_time`(`lead_id` ASC, `follow_up_time` ASC) USING BTREE,
   CONSTRAINT `follow_up_records_ibfk_1` FOREIGN KEY (`lead_id`) REFERENCES `customer_leads` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 103 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 105 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for followup_remind_config
@@ -121,6 +123,6 @@ CREATE TABLE `users`  (
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `username`(`username` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 8 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '用户表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 9 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '用户表' ROW_FORMAT = Dynamic;
 
 SET FOREIGN_KEY_CHECKS = 1;
