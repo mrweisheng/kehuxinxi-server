@@ -120,7 +120,7 @@ exports.getLeadsOverview = async (req, res) => {
     const todayFollowedLeads = await FollowUpRecord.aggregate('lead_id', 'count', {
       distinct: true,
       where: {
-        created_at: {
+        follow_up_time: {
           [Op.gte]: todayStartStr,
           [Op.lte]: todayEndStr
         }
@@ -128,7 +128,7 @@ exports.getLeadsOverview = async (req, res) => {
     });
     const todayFollowupRecords = await FollowUpRecord.count({
       where: {
-        created_at: {
+        follow_up_time: {
           [Op.gte]: todayStartStr,
           [Op.lte]: todayEndStr
         }
