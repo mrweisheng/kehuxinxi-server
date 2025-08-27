@@ -5,6 +5,7 @@ function initializeAssociations() {
   const FollowUpRecord = require('../models/followupModel');
   const OperationLog = require('../models/logModel');
   const User = require('../models/user');
+  const OcrTaskRecord = require('../models/ocrTaskRecordModel');
 
   // 建立关联关系
   // CustomerLead 和 FollowUpRecord 的一对多关系
@@ -61,4 +62,4 @@ function initializeAssociations() {
   console.log('模型关联关系初始化完成');
 }
 
-module.exports = initializeAssociations; 
+module.exports = initializeAssociations;
