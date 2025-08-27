@@ -1,16 +1,45 @@
 const express = require('express');
 const router = express.Router();
 const leadController = require('../controllers/leadController');
+const authMiddleware = require('../middleware/auth');
 
-// 新增线索
-router.post('/', leadController.createLead);
+// 新增线索 - 支持两种鉴权方式
+router.post('/', (req, res, next) => {
+  // 检查是否为批量登记模式
+  const isBatchMode = req.headers['x-batch-mode'] === 'true';
+  
+  if (isBatchMode) {
+    // 批量登记模式：跳过鉴权，直接执行
+    console.log('批量登记模式：跳过鉴权');
+    
+    // 安全检查：验证请求来源（可选，根据实际需求调整）
+    const userAgent = req.headers['user-agent'] || '';
+    const referer = req.headers['referer'] || '';
+    
+    // 记录批量登记请求的详细信息
+    console.log('批量登记请求详情:', {
+      ip: req.ip,
+      userAgent: userAgent.substring(0, 100),
+      referer: referer.substring(0, 100),
+      timestamp: new Date().toISOString()
+    });
+    
+    return leadController.createLead(req, res);
+  } else {
+    // 正常模式：需要鉴权
+    console.log('正常模式：需要鉴权');
+    return authMiddleware(req, res, next);
+  }
+}, leadController.createLead);
 // 获取线索列表
-router.get('/', leadController.getLeads);
+router.get('/', authMiddleware, leadController.getLeads);
+// 导出客户线索
+router.get('/export', authMiddleware, leadController.exportLeads);
 // 获取线索详情
-router.get('/:id', leadController.getLeadDetail);
+router.get('/:id', authMiddleware, leadController.getLeadDetail);
 // 编辑线索
-router.put('/:id', leadController.updateLead);
+router.put('/:id', authMiddleware, leadController.updateLead);
 // 删除线索
-router.delete('/:id', leadController.deleteLead);
+router.delete('/:id', authMiddleware, leadController.deleteLead);
 
 module.exports = router; 

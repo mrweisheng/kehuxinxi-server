@@ -29,7 +29,7 @@ function formatAllDates(obj, visited = new WeakSet()) {
   if (obj && typeof obj === 'object') {
     const newObj = {};
     for (const key in obj) {
-      if (['created_at','updated_at','lead_time','deal_date','follow_up_time','operation_time'].includes(key) && isDateLike(obj[key])) {
+      if (['created_at','updated_at','lead_time','deal_date','follow_up_time','operation_time','start_time','end_time'].includes(key) && isDateLike(obj[key])) {
         newObj[key] = formatDate(obj[key]);
       } else if (typeof obj[key] === 'object' && obj[key] !== null) {
         newObj[key] = formatAllDates(obj[key], visited);
@@ -42,4 +42,4 @@ function formatAllDates(obj, visited = new WeakSet()) {
   return obj;
 }
 
-module.exports = { formatDate, formatAllDates }; 
+module.exports = { formatDate, formatAllDates };

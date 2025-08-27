@@ -15,7 +15,7 @@ const app = express();
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,x-batch-mode');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -39,13 +39,17 @@ app.use(bodyParser.json());
 const userRoutes = require('./routes/userRoutes');
 app.use('/api/users', userRoutes);
 
-// 鉴权中间件（保护所有业务接口）
-const authMiddleware = require('./middleware/auth');
-app.use(authMiddleware);
+// OCR路由（无需鉴权）
+const ocrRoutes = require('./routes/ocrRoutes');
+app.use('/api/ocr', ocrRoutes);
 
 // 业务路由（需要鉴权）
 const leadRoutes = require('./routes/leadRoutes');
 app.use('/api/leads', leadRoutes);
+
+// 鉴权中间件（保护其他业务接口）
+const authMiddleware = require('./middleware/auth');
+app.use(authMiddleware);
 const followupRoutes = require('./routes/followupRoutes');
 app.use('/api/followups', followupRoutes);
 const logRoutes = require('./routes/logRoutes');
@@ -56,6 +60,8 @@ const remindEmailListRoutes = require('./routes/remindEmailListRoutes');
 app.use('/api/remind-email-list', remindEmailListRoutes);
 const statisticsRoutes = require('./routes/statisticsRoutes');
 app.use('/api/statistics', statisticsRoutes);
+const leadSourceRoutes = require('./routes/leadSourceRoutes');
+app.use('/api/lead-sources', leadSourceRoutes);
 
 // 测试数据库连接并启动服务
 const PORT = process.env.PORT || 9527;
@@ -77,4 +83,4 @@ const PORT = process.env.PORT || 9527;
   } catch (err) {
     console.error('数据库连接失败:', err);
   }
-})(); 
+})();

@@ -3,15 +3,15 @@
 
  Source Server         : huaxing
  Source Server Type    : MySQL
- Source Server Version : 80042 (8.0.42-0ubuntu0.24.04.1)
+ Source Server Version : 80043 (8.0.43-0ubuntu0.24.04.1)
  Source Host           : 47.113.177.228:3306
  Source Schema         : kehuxinxi
 
  Target Server Type    : MySQL
- Target Server Version : 80042 (8.0.42-0ubuntu0.24.04.1)
+ Target Server Version : 80043 (8.0.43-0ubuntu0.24.04.1)
  File Encoding         : 65001
 
- Date: 26/07/2025 15:50:17
+ Date: 26/08/2025 16:42:05
 */
 
 SET NAMES utf8mb4;
@@ -45,8 +45,9 @@ CREATE TABLE `customer_leads`  (
   INDEX `idx_need_followup_lead_time`(`need_followup` ASC, `lead_time` ASC) USING BTREE,
   INDEX `idx_follow_up_person`(`follow_up_person` ASC) USING BTREE,
   INDEX `idx_current_follower`(`current_follower` ASC) USING BTREE,
-  INDEX `idx_contact_name`(`contact_name` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 58 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
+  INDEX `idx_contact_name`(`contact_name` ASC) USING BTREE,
+  INDEX `idx_contact_account`(`contact_account` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 482 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for follow_up_records
@@ -66,7 +67,7 @@ CREATE TABLE `follow_up_records`  (
   INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
   INDEX `idx_lead_id_follow_up_time`(`lead_id` ASC, `follow_up_time` ASC) USING BTREE,
   CONSTRAINT `follow_up_records_ibfk_1` FOREIGN KEY (`lead_id`) REFERENCES `customer_leads` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 105 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 806 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for followup_remind_config
@@ -80,6 +81,55 @@ CREATE TABLE `followup_remind_config`  (
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `intention_level`(`intention_level` ASC) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 4 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进超期提醒配置' ROW_FORMAT = Dynamic;
+
+-- ----------------------------
+-- Table structure for lead_sources
+-- ----------------------------
+DROP TABLE IF EXISTS `lead_sources`;
+CREATE TABLE `lead_sources`  (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `platform` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '平台名称，如抖音、视频号',
+  `account` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '平台下的账号，如明哥两地牌',
+  `description` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '描述信息',
+  `is_active` tinyint(1) NULL DEFAULT 1 COMMENT '是否启用 (1: 启用, 0: 禁用)',
+  `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `idx_platform_account`(`platform` ASC, `account` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 8 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '线索来源配置表' ROW_FORMAT = Dynamic;
+
+-- ----------------------------
+-- Table structure for ocr_task_records
+-- ----------------------------
+DROP TABLE IF EXISTS `ocr_task_records`;
+CREATE TABLE `ocr_task_records`  (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT '主键，自增ID',
+  `task_id` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '任务ID（对应OCR控制器中的taskId）',
+  `file_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '上传的文件名',
+  `file_size` int NOT NULL COMMENT '文件大小（字节）',
+  `file_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '文件类型（MIME类型）',
+  `task_status` enum('pending','processing','completed','failed') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '任务状态',
+  `start_time` datetime NOT NULL COMMENT '任务开始时间',
+  `end_time` datetime NULL DEFAULT NULL COMMENT '任务结束时间',
+  `total_time_ms` int NULL DEFAULT NULL COMMENT '总耗时（毫秒）',
+  `api_call_time_ms` int NULL DEFAULT NULL COMMENT 'AI API调用耗时（毫秒）',
+  `base64_convert_time_ms` int NULL DEFAULT NULL COMMENT '文件转换耗时（毫秒）',
+  `customers_extracted` int NULL DEFAULT 0 COMMENT '提取到的客户数量',
+  `customers_imported` int NULL DEFAULT 0 COMMENT '成功导入的客户数量',
+  `customers_duplicated` int NULL DEFAULT 0 COMMENT '去重的客户数量',
+  `customers_failed` int NULL DEFAULT 0 COMMENT '导入失败的客户数量',
+  `extracted_data` json NULL COMMENT '提取到的客户数据（JSON格式）',
+  `lead_time` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '线索时间（从OCR识别的客户名称中提取的时间信息）',
+  `error_message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL COMMENT '错误信息（如果任务失败）',
+  `error_details` json NULL COMMENT '详细错误信息（JSON格式，包含失败的具体客户和原因）',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `idx_task_id`(`task_id` ASC) USING BTREE,
+  INDEX `idx_task_status`(`task_status` ASC) USING BTREE,
+  INDEX `idx_start_time`(`start_time` ASC) USING BTREE,
+  INDEX `idx_created_at`(`created_at` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 5 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = 'OCR任务执行记录表' ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for operation_logs

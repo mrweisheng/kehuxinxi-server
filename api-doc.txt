@@ -92,14 +92,11 @@ GET /api/users/sales
   "code": 0,
   "data": [
     {
-      "id": 3,
-      "username": "sales01",
+      "id": 1,
+      "username": "sales1",
       "nickname": "销售1",
-      "role": "sales",
-      "created_at": "2025-07-18T10:13:13.000Z",
-      "updated_at": "2025-07-18T10:13:13.000Z"
+      "role": "sales"
     }
-    // ...更多销售用户
   ]
 }
 
@@ -110,374 +107,287 @@ GET /api/users/sales
   "error": "错误详情"
 }
 
-说明：
-- 仅返回 role = 'sales' 的用户，且不包含密码字段。
-
-0.4 获取用户详情
-GET /api/users/:id
-
-成功返回：
-{
-  "code": 0,
-  "data": {
-    "id": 1,
-    "username": "admin",
-    "nickname": "管理员",
-    "role": "admin",
-    "created_at": "2024-01-01T10:00:00.000Z",
-    "updated_at": "2024-01-01T10:00:00.000Z"
-  }
-}
-
-错误返回：
-{
-  "code": 404,
-  "message": "用户不存在"
-}
-
-0.5 修改用户信息
-PUT /api/users/:id
-参数（JSON）：
-{
-  "nickname": "新昵称",
-  "role": "manager",
-  "password": "新密码"
-}
-
-说明：
-- 所有参数都是可选的，只修改传入的字段
-- 如果传入 password，会自动加密存储
-- 返回的用户信息中不包含密码字段
-
-成功返回：
-{
-  "code": 0,
-  "message": "修改成功"
-}
-
-错误返回：
-{
-  "code": 404,
-  "message": "用户不存在"
-}
-
-0.6 删除用户
-DELETE /api/users/:id
-
-成功返回：
-{
-  "code": 0,
-  "message": "删除成功"
-}
-
-错误返回：
-{
-  "code": 404,
-  "message": "用户不存在"
-}
-
-注意：
-- 用户管理接口需要管理员权限
-- 删除用户前请确保该用户没有关联的重要数据
-- 密码字段在所有返回中都会被自动排除
-
 ============================
-1. 线索管理（customer_leads）
+1. 客户线索管理
 ============================
-
-注意：以下所有业务接口都需要在请求头中携带有效的 JWT Token：
-Authorization: Bearer your_jwt_token
-
-示例：
-GET /api/leads
-Headers:
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-
-权限控制说明：
-- admin（管理员）：可以查看、编辑、删除所有线索
-- service（客服）：只能查看、编辑、删除自己登记的线索（follow_up_person = 当前用户ID）
-- sales（销售）：只能查看、编辑、删除分配给自己的线索（current_follower = 当前用户ID）
-- 其他角色：默认只能查看、编辑、删除自己登记的线索
 
 1.1 新增线索
 POST /api/leads
+
+鉴权方式：
+1. 正常模式：需要携带有效的 Authorization Token
+2. 批量登记模式：在请求头中设置 x-batch-mode: true，无需Token
+
+请求头说明：
+- Authorization: Bearer <token> （正常模式必填）
+- x-batch-mode: true （批量登记模式必填，此时登记人固定为ID为2的用户）
 参数（JSON）：
 {
-  "customer_nickname": "客户昵称",
+  "customer_nickname": "张三",
   "source_platform": "抖音",
-  "source_account": "douyin123",
-  "contact_account": "13800000000",
-  "contact_name": "王总", // 可选，联系客户时给客户的名称备注
-  "lead_time": "2024-06-01 10:00:00",
+  "source_account": "抖音号123",
+  "contact_account": "13800138000",
+  "contact_name": "张先生",
+  "lead_time": "2024-01-01 10:00:00",
   "is_contacted": 1,
   "intention_level": "高",
-  // "follow_up_person" 字段由后端自动填充为当前登录用户ID，前端无需传递
   "is_deal": 0,
   "deal_date": null,
-  "follow_up_content": "客户首次进线索，需要进一步跟进", // 必填字段
-  "create_follow_up": true, // 可选，默认为true，是否创建跟进记录
-  "current_follower": 2 // 必填，分配给哪个销售跟进，传用户ID
+  "current_follower": 1,
+  "follow_up_content": "客户对产品很感兴趣",
+  "create_follow_up": true
 }
 
-注意：
-- follow_up_person 字段由后端自动填充为当前登录用户ID，前端无需传递（这个字段记录的是登记人）
-- current_follower 字段为必填，前端必须传递用户ID，表示分配给哪个销售跟进
-- 编辑线索时禁止前端修改 follow_up_person 字段，且 current_follower 字段由后端自动覆盖为当前登录用户ID，前端传不传都无效
-- created_at（创建时间）和updated_at（更新时间）由系统自动处理，前端无需传递
-- create_follow_up默认为true，新增线索时会自动创建首次跟进记录
-- 如果设置为false，则不会创建跟进记录
+必填字段说明：
+- customer_nickname: 客户昵称（必填）
+- source_platform: 客户来源平台（必填）
+- source_account: 客户来源账号（必填）
+- contact_account: 客户联系方式（必填）
+- lead_time: 进线索时间（必填，格式：YYYY-MM-DD HH:mm:ss）
+- is_contacted: 是否联系上（必填，0=否，1=是）
+- intention_level: 意向等级（必填，高/中/低）
+- is_deal: 是否成交（必填，0=否，1=是）
+- follow_up_content: 跟进内容（必填）
+
+额外必填字段（单独校验）：
+- current_follower: 跟进人用户ID（必填，数字）- 负责跟进该线索的销售人员
+
+可选字段说明：
+- contact_name: 联系名称（可选）
+- deal_date: 成交日期（可选，仅在成交时填写，格式：YYYY-MM-DD HH:mm:ss）
+- create_follow_up: 是否创建跟进记录（可选，默认true）
+
+自动填充字段：
+- follow_up_person: 登记人（正常模式：自动填充为当前登录用户ID；批量模式：固定为ID为2的用户，无需前端传递）- 创建该线索的人
 
 成功返回：
 {
-  "success": true, 
+  "success": true,
   "id": 1,
   "followUpId": 1,
   "createdFollowUp": true,
   "performance": {
     "totalTime": "150ms",
-    "dbTime": "50ms"
+    "dbTime": "120ms"
   }
 }
 
 错误返回：
 {
   "success": false,
-  "message": "错误信息",
-  "performance": {
-    "totalTime": "200ms"
-  }
-}
-
-错误码说明：
-- 400: 参数错误（必填字段缺失、格式错误等）
-- 500: 服务器内部错误（数据库连接失败、插入失败等）
-
-1.2 获取线索列表
-GET /api/leads
-
-请求参数（Query）
-| 参数名             | 类型    | 必填 | 说明                         |
-|--------------------|---------|------|------------------------------|
-| page               | int     | 否   | 页码，默认1                  |
-| page_size          | int     | 否   | 每页数量，默认20，最大100     |
-| intention_level    | string  | 否   | 意向等级（高/中/低）         |
-| is_deal            | int     | 否   | 是否成交（0/1）              |
-| is_contacted       | int     | 否   | 是否联系上（0/1）            |
-| keyword            | string  | 否   | 关键字（客户昵称/联系方式/来源账号/联系名称模糊搜索） |
-| date_from          | string  | 否   | 起始时间（yyyy-MM-dd）       |
-| date_to            | string  | 否   | 结束时间（yyyy-MM-dd）       |
-| customer_nickname  | string  | 否   | 客户昵称模糊搜索             |
-| contact_name       | string  | 否   | 联系名称模糊搜索             |
-
-权限控制说明：
-- admin：返回所有线索
-- service：只返回自己登记的线索（follow_up_person = 当前用户ID）
-- sales：只返回分配给自己的线索（current_follower = 当前用户ID）
-- 其他角色：只返回自己登记的线索
-
-成功返回示例：
-```
-{
-  "success": true,
-  "total": 2, // 总记录数
-  "list": [
-    {
-      "id": 1, // 线索ID
-      "customer_nickname": "张三", // 客户昵称
-      "source_platform": "抖音", // 来源平台
-      "source_account": "douyin123", // 来源账号
-      "contact_account": "13800000000", // 客户联系方式
-      "contact_name": "王总", // 联系名称
-      "lead_time": "2025-07-19 10:00:00", // 进线索时间
-      "is_contacted": 1, // 是否联系上（0=否，1=是）
-      "intention_level": "高", // 意向等级
-      "follow_up_person": "2", // 登记人用户ID（字符串）
-      "is_deal": 0, // 是否成交（0=否，1=是）
-      "deal_date": null, // 成交日期（仅成交时有值）
-      "need_followup": 1, // 当前周期是否需要跟进（1=是，0=否）
-      "end_followup": 0, // 是否终结跟进（1=终结，0=未终结）
-      "end_followup_reason": null, // 终结原因（终结时必填）
-      "current_follower": {
-        "id": 3, // 当前分配的跟进人用户ID（销售ID）
-        "nickname": "销售A", // 跟进人昵称
-        "username": "sales01" // 跟进人用户名
-      },
-      "created_at": "2025-07-19T10:00:00.000Z", // 创建时间
-      "updated_at": "2025-07-19T10:00:00.000Z", // 更新时间
-      "latest_follow_up": { // 最新一条跟进记录
-        "follow_up_time": "2025-07-19 10:00:00", // 最新跟进时间
-        "follow_up_content": "首次联系，客户有意向" // 最新跟进内容
-      }
-    }
-    // ...更多线索
-  ],
-  "performance": {
-    "totalTime": "120ms", // 接口总耗时
-    "dbTime": "80ms" // 数据库操作耗时
-  }
-}
-```
-
-返回字段说明：
-| 字段名                | 类型      | 说明                                                         |
-|-----------------------|-----------|--------------------------------------------------------------|
-| id                    | int       | 线索ID（主键）                                               |
-| customer_nickname     | string    | 客户昵称                                                     |
-| source_platform       | string    | 来源平台（如抖音、微信等）                                   |
-| source_account        | string    | 来源账号                                                     |
-| contact_account       | string    | 客户联系方式（手机号、微信号等）                             |
-| contact_name          | string    | 联系名称（联系客户时给客户的名称备注）                       |
-| lead_time             | string    | 进线索时间（yyyy-MM-dd HH:mm:ss）                            |
-| is_contacted          | int       | 是否联系上（0=否，1=是）                                     |
-| intention_level       | string    | 意向等级（高/中/低）                                         |
-| follow_up_person      | string    | 登记人用户ID（字符串，实际存储为用户ID）                     |
-| is_deal               | int       | 是否成交（0=否，1=是）                                       |
-| deal_date             | string    | 成交日期（yyyy-MM-dd），仅在成交时填写，否则为null           |
-| need_followup         | int       | 当前周期是否需要跟进（1=是，0=否，系统自动维护）              |
-| end_followup          | int       | 是否终结跟进（1=终结，0=未终结）                             |
-| end_followup_reason   | string    | 终结原因（终结时必填，否则为null）                           |
-| current_follower      | object    | 当前分配的跟进人用户ID（销售ID），包含id、nickname、username |
-| created_at            | string    | 创建时间（ISO格式）                                          |
-| updated_at            | string    | 更新时间（ISO格式）                                          |
-| latest_follow_up      | object    | 最新一条跟进记录（如有）                                     |
-| └─ follow_up_time     | string    | 最新跟进时间（yyyy-MM-dd HH:mm:ss）                          |
-| └─ follow_up_content  | string    | 最新跟进内容                                                 |
-| performance           | object    | 性能统计信息                                                 |
-| └─ totalTime          | string    | 接口总耗时                                                   |
-| └─ dbTime             | string    | 数据库操作耗时                                               |
-
-错误返回示例：
-```
-{
-  "success": false,
-  "message": "错误信息",
+  "message": "缺少必填字段: customer_nickname, current_follower",
   "performance": {
     "totalTime": "50ms"
   }
 }
-```
 
-备注：
-- follow_up_person 字段为字符串，存储的是用户ID（与 users.id 对应），用于登记人权限判断。
-- current_follower 字段为整数，存储的是分配的销售用户ID（与 users.id 对应）。
-- latest_follow_up 只返回最新一条跟进记录的时间和内容，便于前端展示。
-- 权限控制已在后端实现，前端无需额外处理。
+1.2 获取线索列表
+GET /api/leads?page=1&page_size=20&intention_level=高&is_deal=0&keyword=张三&date_from=2024-01-01&date_to=2024-12-31
 
-1.3 获取线索详情
+参数说明：
+- page: 页码（默认1）
+- page_size: 每页数量（默认20，最大100）
+- intention_level: 意向等级（高/中/低）
+- is_deal: 是否成交（0/1）
+- is_contacted: 是否联系上（0/1）
+- keyword: 关键词搜索
+- customer_nickname: 客户昵称搜索
+- contact_name: 联系名称搜索
+- date_from: 开始日期
+- date_to: 结束日期
+
+成功返回：
+{
+  "success": true,
+  "total": 100,
+  "list": [
+    {
+      "id": 1,
+      "customer_nickname": "张三",
+      "source_platform": "抖音",
+      "source_account": "抖音号123",
+      "contact_account": "13800138000",
+      "contact_name": "张先生",
+      "lead_time": "2024-01-01 10:00:00",
+      "is_contacted": 1,
+      "intention_level": "高",
+      "follow_up_person": "admin",
+      "is_deal": 0,
+      "deal_date": null,
+      "created_at": "2024-01-01T10:00:00.000Z",
+      "updated_at": "2024-01-01T10:00:00.000Z",
+      "need_followup": 1,
+      "end_followup": 0,
+      "end_followup_reason": null,
+      "current_follower": {
+        "id": 1,
+        "nickname": "销售1",
+        "username": "sales1"
+      },
+      "latest_follow_up": {
+        "follow_up_time": "2024-01-02 10:00:00",
+        "follow_up_content": "客户对产品很感兴趣"
+      }
+    }
+  ]
+}
+
+1.3 导出客户线索
+GET /api/leads/export?date_from=2024-01-01&date_to=2024-12-31&intention_level=高&is_deal=0&keyword=张三
+
+参数说明：
+- date_from: 开始日期（必填，格式：YYYY-MM-DD）
+- date_to: 结束日期（必填，格式：YYYY-MM-DD）
+- intention_level: 意向等级（高/中/低）
+- is_deal: 是否成交（0/1）
+- is_contacted: 是否联系上（0/1）
+- keyword: 关键词搜索
+- customer_nickname: 客户昵称搜索
+- contact_name: 联系名称搜索
+
+成功返回：
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "customer_nickname": "张三",
+      "source_platform": "抖音",
+      "source_account": "抖音号123",
+      "contact_account": "13800138000",
+      "contact_name": "张先生",
+      "lead_time": "2024-01-01 10:00:00",
+      "is_contacted": "是",
+      "intention_level": "高",
+      "follow_up_person": "admin",
+      "is_deal": "否",
+      "deal_date": null,
+      "created_at": "2024-01-01T10:00:00.000Z",
+      "updated_at": "2024-01-01T10:00:00.000Z",
+      "need_followup": "是",
+      "end_followup": "否",
+      "end_followup_reason": null,
+      "current_follower": "销售1",
+      "current_follower_username": "sales1",
+      "latest_follow_up_time": "2024-01-02 10:00:00",
+      "latest_follow_up_content": "客户对产品很感兴趣",
+      "latest_follow_up_method": "电话",
+      "latest_follow_up_result": "有意向",
+      "latest_follow_up_person": "销售1"
+    }
+  ],
+  "total": 1,
+  "date_range": {
+    "from": "2024-01-01",
+    "to": "2024-12-31"
+  }
+}
+
+错误返回：
+{
+  "success": false,
+  "message": "必须提供时间区间参数 date_from 和 date_to"
+}
+
+1.4 获取线索详情
 GET /api/leads/:id
 
 成功返回：
-{ 
-  "success": true, 
-  "data": { 
-    ...线索对象...,
-    "need_followup": 1, // 当前周期是否需要跟进
-    "end_followup": 0,  // 是否终结跟进
-    "end_followup_reason": null, // 终结原因
-    "latest_follow_up": {
-      "follow_up_time": "2024-06-01 15:30:00",
-      "follow_up_content": "客户有意向，需要进一步跟进"
-    }
-  } 
-}
-
-注意：线索详情会包含最新一条跟进记录的时间和内容
-
-错误返回：
 {
-  "success": false,
-  "message": "错误信息"
+  "success": true,
+  "data": {
+    "id": 1,
+    "customer_nickname": "张三",
+    "source_platform": "抖音",
+    "source_account": "抖音号123",
+    "contact_account": "13800138000",
+    "contact_name": "张先生",
+    "lead_time": "2024-01-01 10:00:00",
+    "is_contacted": 1,
+    "intention_level": "高",
+    "follow_up_person": "admin",
+    "is_deal": 0,
+    "deal_date": null,
+    "created_at": "2024-01-01T10:00:00.000Z",
+    "updated_at": "2024-01-01T10:00:00.000Z"
+  }
 }
 
-错误码说明：
-- 404: 未找到该线索
-- 400: 参数错误（ID格式错误）
-- 500: 服务器内部错误（数据库查询失败等）
-
-1.4 编辑线索
+1.5 编辑线索
 PUT /api/leads/:id
 参数（JSON）：
 {
-  "customer_nickname": "客户昵称",
+  "customer_nickname": "张三",
   "source_platform": "抖音",
-  "contact_account": "13800000000",
-  "contact_name": "王总", // 可选，联系客户时给客户的名称备注
+  "source_account": "抖音号123",
+  "contact_account": "13800138000",
+  "contact_name": "张先生",
+  "lead_time": "2024-01-01 10:00:00",
+  "is_contacted": 1,
   "intention_level": "高",
-  "follow_up_person": "张三",
-  "is_deal": 1,
-  "deal_date": "2024-06-02",
-  "create_follow_up": true, // 可选，默认为false，是否创建跟进记录
-  "follow_up_content": "客户确认购买", // 创建跟进记录时必填
-  "follow_up_time": "2024-06-02 15:30:00", // 可选，跟进时间
-  "follow_up_method": "电话", // 可选，跟进方式
-  "follow_up_result": "成交", // 可选，跟进结果
-  "end_followup": 1, // 是否终结跟进（1=终结，0=未终结）
-  "end_followup_reason": "客户已拉黑" // 终结原因（终结时必填）
+  "is_deal": 0,
+  "deal_date": null,
+  "end_followup": 0,
+  "end_followup_reason": null,
+  "create_follow_up": true,
+  "follow_up_time": "2024-01-02 10:00:00",
+  "follow_up_method": "电话",
+  "follow_up_content": "客户对产品很感兴趣",
+  "follow_up_result": "有意向"
 }
 
-说明：
-- 终结跟进时，end_followup 必须为1，且 end_followup_reason 必填，否则返回400错误
-- 终结后，need_followup 会自动设为0，且该线索不再参与自动提醒
+可编辑字段说明：
+- customer_nickname: 客户昵称
+- source_platform: 客户来源平台
+- source_account: 客户来源账号
+- contact_account: 客户联系方式
+- contact_name: 联系名称
+- lead_time: 进线索时间
+- is_contacted: 是否联系上（0=否，1=是）
+- intention_level: 意向等级（高/中/低）
+- is_deal: 是否成交（0=否，1=是）
+- deal_date: 成交日期（格式：YYYY-MM-DD HH:mm:ss）
+- end_followup: 是否终结跟进（0=否，1=是）
+- end_followup_reason: 终结跟进原因（当end_followup=1时必填）
+
+跟进记录相关字段（当create_follow_up=true时）：
+- follow_up_time: 跟进时间（可选，默认当前时间）
+- follow_up_method: 跟进方式（可选，默认"编辑跟进"）
+- follow_up_content: 跟进内容（必填）
+- follow_up_result: 跟进结果（可选，默认"待跟进"）
+
+禁止编辑字段：
+- follow_up_person: 登记人（自动填充，不允许修改）- 创建该线索的人
+- current_follower: 跟进人（不允许修改）- 保持原有的分配关系，确保销售人员的权限不受影响
+
+重要说明：
+- 管理员可以编辑所有线索的基本信息，但不能修改跟进人分配
+- 跟进记录的创建者仍然是当前登录用户，但不会影响线索的跟进人分配
+- 这样可以确保销售B始终能看到分配给自己的线索，即使管理员A创建了跟进记录
 
 成功返回：
-{ 
+{
   "success": true,
   "updatedLead": true,
-  "followUpId": 2,
+  "followUpId": 1,
   "createdFollowUp": true,
   "performance": {
-    "totalTime": "100ms",
-    "dbTime": "30ms"
+    "totalTime": "200ms",
+    "dbTime": "150ms"
   }
 }
 
-注意：
-- create_follow_up默认为false，编辑线索时不会自动创建跟进记录
-- 只有当前端明确设置create_follow_up为true时，才会创建跟进记录
-- 创建跟进记录时，follow_up_content为必填字段
-
-错误返回：
-{
-  "success": false,
-  "message": "错误信息"
-}
-
-错误码说明：
-- 404: 未找到该线索
-- 400: 参数错误（必填字段缺失、格式错误等）
-- 500: 服务器内部错误（数据库更新失败等）
-
-1.5 删除线索
+1.6 删除线索
 DELETE /api/leads/:id
 
 成功返回：
-{ 
-  "success": true,
-  "deletedFollowUps": 2,
-  "performance": {
-    "totalTime": "50ms",
-    "dbTime": "30ms"
-  }
-}
-
-错误返回：
 {
-  "success": false,
-  "message": "错误信息",
-  "performance": {
-    "totalTime": "50ms"
-  }
+  "success": true,
+  "message": "线索删除成功"
 }
-
-错误码说明：
-- 404: 未找到该线索
-- 400: 参数错误（ID格式错误）或外键约束错误
-- 500: 服务器内部错误（数据库删除失败等）
-
-注意：删除线索时会同时删除该线索的所有跟进记录
 
 ============================
-2. 跟进记录（follow_up_records）
+2. 跟进记录管理
 ============================
 
 2.1 新增跟进记录
@@ -485,382 +395,764 @@ POST /api/followups
 参数（JSON）：
 {
   "lead_id": 1,
-  "follow_up_time": "2024-06-02 15:00:00",
+  "follow_up_time": "2024-01-02 10:00:00",
   "follow_up_method": "电话",
-  "follow_up_content": "已电话沟通，客户有意向",
-  "follow_up_result": "待进一步跟进",
-  "follow_up_person": "张三"
+  "follow_up_content": "客户对产品很感兴趣",
+  "follow_up_result": "有意向",
+  "follow_up_person_id": 1
 }
-
-说明：
-- 新增跟进记录后，系统会自动将该线索的 need_followup 字段设为0
-
-成功返回：
-{ "success": true, "id": 1 }
-
-错误返回：
-{
-  "success": false,
-  "message": "错误信息"
-}
-
-错误码说明：
-- 400: 参数错误（必填字段缺失、格式错误等）
-- 404: 关联的线索不存在
-- 500: 服务器内部错误（数据库插入失败等）
-
-2.2 获取某条线索的跟进记录
-GET /api/followups?lead_id=1
 
 成功返回：
 {
   "success": true,
-  "list": [ { ...跟进记录对象... } ]
+  "message": "跟进记录创建成功",
+  "data": {
+    "id": 1,
+    "lead_id": 1
+  }
 }
 
-错误返回：
-{
-  "success": false,
-  "message": "错误信息"
-}
-
-错误码说明：
-- 400: 参数错误（lead_id格式错误等）
-- 500: 服务器内部错误（数据库查询失败等）
-
-2.3 获取某条线索的所有跟进记录（RESTful）
-GET /api/followups/:leadId?page=1&page_size=20
+2.2 获取跟进记录列表
+GET /api/followups?lead_id=1&date_from=2024-01-01&date_to=2024-12-31
 
 参数说明：
-- page: 页码，默认为1
-- page_size: 每页大小，默认为20，最大100
+- lead_id: 线索ID
+- date_from: 开始日期
+- date_to: 结束日期
 
 成功返回：
 {
   "success": true,
-  "leadId": 1,
-  "total": 25,
-  "page": 1,
-  "page_size": 20,
-  "total_pages": 2,
-  "list": [
-    {
-      "id": 25,
-      "lead_id": 1,
-      "follow_up_time": "2024-06-05 15:30:00",
-      "follow_up_method": "面谈",
-      "follow_up_content": "面谈成功，客户确认购买",
-      "follow_up_result": "成交",
-      "follow_up_person": "张三",
-      "created_at": "2024-06-05 15:30:00",
-      "updated_at": "2024-06-05 15:30:00"
-    },
-    {
-      "id": 24,
-      "lead_id": 1,
-      "follow_up_time": "2024-06-04 14:00:00",
-      "follow_up_method": "电话",
-      "follow_up_content": "客户有意向，约明天面谈",
-      "follow_up_result": "待面谈",
-      "follow_up_person": "张三",
-      "created_at": "2024-06-04 14:00:00",
-      "updated_at": "2024-06-04 14:00:00"
-    }
-    // ... 更多记录
-  ],
-  "performance": {
-    "totalTime": "50ms",
-    "dbTime": "30ms"
-  }
-}
-
-错误返回：
-{
-  "success": false,
-  "message": "错误信息",
-  "performance": {
-    "totalTime": "50ms"
-  }
-}
-
-错误码说明：
-- 400: 参数错误（leadId格式错误、分页参数错误）
-- 500: 服务器内部错误（数据库查询失败等）
-
-注意：
-- 返回该线索的跟进记录，按时间倒序排列，包含全部字段
-- 支持分页查询，适合大量记录的场景
-- 默认每页20条，最大100条
-
-============================
-3. 操作日志（operation_logs）
-============================
-
-3.1 查询日志
-GET /api/logs?lead_id=1&date_from=2024-06-01&date_to=2024-06-30
-
-成功返回：
-{
-  "success": true,
-  "list": [ { ...日志对象... } ]
-}
-
-错误返回：
-{
-  "success": false,
-  "message": "错误信息"
-}
-
-错误码说明：
-- 400: 参数错误（日期格式错误等）
-- 500: 服务器内部错误（数据库查询失败等）
-
-============================
-4. 跟进超期提醒配置（followup_remind_config）
-============================
-
-4.1 获取所有意向级别的提醒配置
-GET /api/followup-remind-config
-
-成功返回：
-{
-  "success": true,
+  "total": 10,
   "list": [
     {
       "id": 1,
-      "intention_level": "高",
-      "interval_days": 1,
-      "updated_at": "2025-07-12T12:00:00.000Z"
-    },
-    {
-      "id": 2,
-      "intention_level": "中",
-      "interval_days": 3,
-      "updated_at": "2025-07-12T12:00:00.000Z"
-    },
-    {
-      "id": 3,
-      "intention_level": "低",
-      "interval_days": 5,
-      "updated_at": "2025-07-12T12:00:00.000Z"
+      "lead_id": 1,
+      "follow_up_time": "2024-01-02 10:00:00",
+      "follow_up_method": "电话",
+      "follow_up_content": "客户对产品很感兴趣",
+      "follow_up_result": "有意向",
+      "follow_up_person": {
+        "id": 1,
+        "nickname": "销售1"
+      },
+      "created_at": "2024-01-02T10:00:00.000Z"
     }
   ]
 }
 
-4.2 更新某个意向级别的提醒配置
-PUT /api/followup-remind-config/:level
-- :level 取值为 高、中、低
-
-请求体：
-{
-  "interval_days": 3
-}
-
-成功返回：
-{ "success": true }
-
-错误返回：
-{ "success": false, "message": "错误信息" }
-
-字段说明：
-- intention_level：意向等级（高/中/低）
-- interval_days：最大未跟进天数
-
-4.3 手动触发跟进提醒检查
-POST /api/followup-remind-config/trigger-check
-
-说明：手动触发系统检查所有超期线索并发送邮件提醒
-
-成功返回：
-{
-  "success": true,
-  "message": "检查完成，发现 5 条超期线索",
-  "data": {
-    "overdue_count": 5,
-    "overdue_list": [
-      {
-        "lead_id": 1,
-        "customer_nickname": "张三",
-        "intention_level": "高",
-        "last_follow_up_time": "2024-06-01 10:00:00",
-        "follow_up_person": "李四",
-        "overdue_days": 3,
-        "config_days": 1,
-        "email_list": ["a@xx.com", "b@xx.com"]
-      }
-    ]
-  },
-  "performance": {
-    "totalTime": "500ms"
-  }
-}
-
-错误返回：
-{
-  "success": false,
-  "message": "错误信息",
-  "performance": {
-    "totalTime": "200ms"
-  }
-}
-
-错误码说明：
-- 500: 服务器内部错误（数据库查询失败、邮件发送失败等）
-
-注意：
-- 系统会自动检查所有意向等级的配置
-- 如果发现超期线索，会自动发送邮件给配置的收件人列表
-- 如果没有配置收件人邮箱，则只返回检查结果，不发送邮件
-- 系统默认每天上午9点自动执行检查，此接口用于手动触发
-
 ============================
-5. 数据分析统计（statistics）
+3. 统计功能
 ============================
 
-5.1 线索统计概览
+3.1 获取统计数据
 GET /api/statistics/leads-overview
 
 成功返回：
 {
   "success": true,
   "data": {
-    "total_leads": 150,
-    "intention_distribution": {
-      "高": 45,
-      "中": 60,
-      "低": 45
+    "total_leads": 100,
+    "contacted_leads": 80,
+    "dealed_leads": 20,
+    "need_followup_leads": 30,
+    "today_leads": 5,
+    "today_followups": 10
+  }
+}
+
+3.2 获取线索来源统计
+GET /api/statistics/lead-sources?date_from=2024-01-01&date_to=2024-01-31&group_by=platform
+
+参数说明：
+- date_from: 开始日期（可选，格式：YYYY-MM-DD）
+- date_to: 结束日期（可选，格式：YYYY-MM-DD）
+- group_by: 分组方式（platform: 按平台分组, account: 按平台和账号分组）
+
+成功返回（按平台分组）：
+{
+  "success": true,
+  "data": [
+    {
+      "platform": "抖音",
+      "total_leads": 50,
+      "deal_leads": 10,
+      "contacted_leads": 40,
+      "deal_rate": 20.00
     },
-    "platform_distribution": {
-      "抖音": 80,
-      "微信": 50,
-      "其他": 20
-    },
-    "recent_additions": {
-      "today": 5,
-      "this_week": 15,
-      "this_month": 45
-    },
-    "last_15_days_trend": [
+    {
+      "platform": "视频号",
+      "total_leads": 30,
+      "deal_leads": 5,
+      "contacted_leads": 25,
+      "deal_rate": 16.67
+    }
+  ]
+}
+
+成功返回（按平台和账号分组）：
+{
+  "success": true,
+  "data": {
+    "抖音": [
       {
-        "date": "2024-01-01",
-        "count": 3
+        "account": "明哥两地牌",
+        "source_id": 1,
+        "total_leads": 25,
+        "deal_leads": 5,
+        "contacted_leads": 20,
+        "deal_rate": 20.00
+      }
+    ],
+    "视频号": [
+      {
+        "account": "明哥两地牌",
+        "source_id": 4,
+        "total_leads": 15,
+        "deal_leads": 3,
+        "contacted_leads": 12,
+        "deal_rate": 20.00
+      }
+    ]
+  }
+}
+
+3.3 获取线索来源趋势统计
+GET /api/statistics/lead-sources/trend?date_from=2024-01-01&date_to=2024-01-31&group_by=day&platform=抖音&account=明哥两地牌
+
+参数说明：
+- date_from: 开始日期（必填，格式：YYYY-MM-DD）
+- date_to: 结束日期（必填，格式：YYYY-MM-DD）
+- group_by: 时间分组（day: 按天, week: 按周, month: 按月）
+- platform: 平台名称（可选）
+- account: 账号名称（可选）
+
+成功返回：
+{
+  "success": true,
+  "data": [
+    {
+      "platform": "抖音",
+      "account": "明哥两地牌",
+      "trend": [
+        {
+          "time_period": "2024-01-01",
+          "total_leads": 5,
+          "deal_leads": 1
+        },
+        {
+          "time_period": "2024-01-02",
+          "total_leads": 3,
+          "deal_leads": 0
+        }
+      ]
+    }
+  ]
+}
+
+3.4 获取上周统计
+GET /api/statistics/last-week
+
+成功返回：
+{
+  "success": true,
+  "data": {
+    "week_range": {
+      "start": "2024-01-01",
+      "end": "2024-01-07",
+      "dates": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06", "2024-01-07"]
+    },
+    "platform_stats": {
+      "抖音": {
+        "2024-01-01": 5,
+        "2024-01-02": 3,
+        "2024-01-03": 7,
+        "2024-01-04": 2,
+        "2024-01-05": 4,
+        "2024-01-06": 1,
+        "2024-01-07": 6
+      },
+      "视频号": {
+        "2024-01-01": 2,
+        "2024-01-02": 4,
+        "2024-01-03": 1,
+        "2024-01-04": 3,
+        "2024-01-05": 2,
+        "2024-01-06": 5,
+        "2024-01-07": 3
+      },
+      "未知": {
+        "2024-01-01": 1,
+        "2024-01-02": 0,
+        "2024-01-03": 0,
+        "2024-01-04": 0,
+        "2024-01-05": 0,
+        "2024-01-06": 0,
+        "2024-01-07": 0
+      }
+    },
+    "account_stats": {
+      "抖音": {
+        "明哥两地牌": {
+          "2024-01-01": 3,
+          "2024-01-02": 2,
+          "2024-01-03": 4,
+          "2024-01-04": 1,
+          "2024-01-05": 2,
+          "2024-01-06": 0,
+          "2024-01-07": 3
+        },
+        "明哥中港两地牌": {
+          "2024-01-01": 2,
+          "2024-01-02": 1,
+          "2024-01-03": 3,
+          "2024-01-04": 1,
+          "2024-01-05": 2,
+          "2024-01-06": 1,
+          "2024-01-07": 3
+        },
+        "未知": {
+          "2024-01-01": 0,
+          "2024-01-02": 0,
+          "2024-01-03": 0,
+          "2024-01-04": 0,
+          "2024-01-05": 0,
+          "2024-01-06": 0,
+          "2024-01-07": 0
+        }
+      },
+      "视频号": {
+        "明哥两地牌": {
+          "2024-01-01": 1,
+          "2024-01-02": 2,
+          "2024-01-03": 1,
+          "2024-01-04": 2,
+          "2024-01-05": 1,
+          "2024-01-06": 3,
+          "2024-01-07": 2
+        },
+        "明哥中港两地牌": {
+          "2024-01-01": 1,
+          "2024-01-02": 2,
+          "2024-01-03": 0,
+          "2024-01-04": 1,
+          "2024-01-05": 1,
+          "2024-01-06": 2,
+          "2024-01-07": 1
+        },
+        "未知": {
+          "2024-01-01": 0,
+          "2024-01-02": 0,
+          "2024-01-03": 0,
+          "2024-01-04": 0,
+          "2024-01-05": 0,
+          "2024-01-06": 0,
+          "2024-01-07": 0
+        }
+      },
+      "未知": {
+        "未知": {
+          "2024-01-01": 1,
+          "2024-01-02": 0,
+          "2024-01-03": 0,
+          "2024-01-04": 0,
+          "2024-01-05": 0,
+          "2024-01-06": 0,
+          "2024-01-07": 0
+        }
+      }
+    },
+    "daily_totals": {
+      "2024-01-01": 8,
+      "2024-01-02": 7,
+      "2024-01-03": 8,
+      "2024-01-04": 5,
+      "2024-01-05": 6,
+      "2024-01-06": 6,
+      "2024-01-07": 9
+    }
+  }
+}
+
+============================
+4. 日志管理
+============================
+
+4.1 获取操作日志
+GET /api/logs?lead_id=1&date_from=2024-01-01&date_to=2024-12-31
+
+参数说明：
+- lead_id: 线索ID
+- date_from: 开始日期
+- date_to: 结束日期
+
+成功返回：
+{
+  "success": true,
+  "total": 50,
+  "list": [
+    {
+      "id": 1,
+      "lead_id": 1,
+      "operation_type": "create",
+      "operation_desc": "创建线索",
+      "operator": "admin",
+      "created_at": "2024-01-01T10:00:00.000Z"
+    }
+  ]
+}
+
+============================
+5. 跟进提醒配置
+============================
+
+5.1 获取跟进提醒配置
+GET /api/followup-remind-config
+
+成功返回：
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "intention_level": "高",
+      "interval_days": 3,
+      "created_at": "2024-01-01T10:00:00.000Z"
+    }
+  ]
+}
+
+5.2 更新跟进提醒配置
+PUT /api/followup-remind-config
+参数（JSON）：
+{
+  "configs": [
+    {
+      "intention_level": "高",
+      "interval_days": 3
+    },
+    {
+      "intention_level": "中",
+      "interval_days": 7
+    },
+    {
+      "intention_level": "低",
+      "interval_days": 15
+    }
+  ]
+}
+
+成功返回：
+{
+  "success": true,
+  "message": "配置更新成功"
+}
+
+============================
+6. 邮件提醒列表
+============================
+
+6.1 获取邮件提醒列表
+GET /api/remind-email-list
+
+成功返回：
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "email": "admin@example.com",
+      "is_active": 1,
+      "created_at": "2024-01-01T10:00:00.000Z"
+    }
+  ]
+}
+
+6.2 添加邮件提醒
+POST /api/remind-email-list
+参数（JSON）：
+{
+  "email": "admin@example.com"
+}
+
+成功返回：
+{
+  "success": true,
+  "message": "邮件地址添加成功"
+}
+
+6.3 删除邮件提醒
+DELETE /api/remind-email-list/:id
+
+成功返回：
+{
+  "success": true,
+  "message": "邮件地址删除成功"
+}
+
+============================
+错误码说明
+============================
+
+400: 参数错误
+401: 未授权
+403: 权限不足
+404: 资源不存在
+500: 服务器内部错误
+
+============================
+7. 线索来源相关API
+============================
+
+7.1 获取线索来源列表（按平台分组）
+GET /api/lead-sources
+
+成功返回：
+{
+  "success": true,
+  "data": {
+    "抖音": [
+      {
+        "id": 1,
+        "account": "明哥两地牌",
+        "description": "抖音平台-明哥两地牌账号"
       },
       {
-        "date": "2024-01-02", 
-        "count": 5
+        "id": 2,
+        "account": "明哥中港两地牌",
+        "description": "抖音平台-明哥中港两地牌账号"
       }
-      // ... 最近15天的数据
     ],
-    "followup": {
-      "this_week_lead_count": 12,   // 本周被跟进的线索数（去重）
-      "this_week_record_count": 30  // 本周跟进记录总数
-    },
-    "today_stats": {
-      "followed_leads": 2,      // 今日有跟进动作的线索数（去重，按 follow_up_records.created_at）
-      "followup_records": 3,    // 今日新建的跟进记录数（按 follow_up_records.created_at）
-      "ended_leads": 1          // 今日被终结的线索数（customer_leads.end_followup=1 且 updated_at为当天）
-    }
-  },
-  "performance": {
-    "totalTime": "150ms",
-    "dbTime": "50ms"
+    "视频号": [
+      {
+        "id": 4,
+        "account": "明哥两地牌",
+        "description": "视频号平台-明哥两地牌账号"
+      }
+    ]
+  }
+}
+
+7.2 获取所有平台列表
+GET /api/lead-sources/platforms
+
+成功返回：
+{
+  "success": true,
+  "data": ["抖音", "视频号"]
+}
+
+7.3 根据平台获取账号列表
+GET /api/lead-sources/platforms/抖音/accounts
+
+成功返回：
+{
+  "success": true,
+  "data": {
+    "platform": "抖音",
+    "accounts": [
+      {
+        "id": 1,
+        "account": "明哥两地牌",
+        "description": "抖音平台-明哥两地牌账号"
+      },
+      {
+        "id": 2,
+        "account": "明哥中港两地牌",
+        "description": "抖音平台-明哥中港两地牌账号"
+      }
+    ]
+  }
+}
+
+7.4 新增平台
+POST /api/lead-sources/platforms
+参数（JSON）：
+{
+  "platform": "小红书",
+  "description": "小红书平台"
+}
+
+成功返回：
+{
+  "success": true,
+  "message": "平台创建成功",
+  "data": {
+    "id": 7,
+    "platform": "小红书",
+    "account": "默认账号",
+    "description": "小红书平台-默认账号"
   }
 }
 
 错误返回：
 {
   "success": false,
-  "message": "错误信息",
-  "performance": {
-    "totalTime": "200ms"
-  }
+  "message": "平台名称已存在"
 }
 
-错误码说明：
-- 500: 服务器内部错误（数据库查询失败等）
-
-字段说明：
-- total_leads: 总线索数量
-- intention_distribution: 各意向等级分布
-- platform_distribution: 各来源平台分布
-- recent_additions: 最近新增统计
-  - today: 今日新增
-  - this_week: 本周新增
-  - this_month: 本月新增
-- last_15_days_trend: 最近15天趋势数据，用于前端图表展示
-- followup: 跟进统计
-  - this_week_lead_count: 本周被跟进的线索数（去重，周一到周日）
-  - this_week_record_count: 本周跟进记录总数（周一到周日）
-- today_stats: 今日业务动作统计（对象）
-  - followed_leads: 今日有跟进动作的线索数（去重，按 follow_up_records.created_at）
-  - followup_records: 今日新建的跟进记录数（按 follow_up_records.created_at）
-  - ended_leads: 今日被终结的线索数（customer_leads.end_followup=1 且 updated_at为当天）
-- 其他统计字段口径未变。
-
-============================
-6. 跟进超期提醒收件人邮箱（remind_email_list）
-============================
-
-5.1 获取所有收件人邮箱
-GET /api/remind-email-list
+7.5 新增账号
+POST /api/lead-sources/accounts
+参数（JSON）：
+{
+  "platform": "抖音",
+  "account": "新账号",
+  "description": "抖音平台-新账号"
+}
 
 成功返回：
 {
   "success": true,
-  "list": [
-    { "id": 1, "email": "a@xx.com" },
-    { "id": 2, "email": "b@xx.com" }
-  ]
+  "message": "账号创建成功",
+  "data": {
+    "id": 8,
+    "platform": "抖音",
+    "account": "新账号",
+    "description": "抖音平台-新账号"
+  }
 }
-
-5.2 新增收件人邮箱
-POST /api/remind-email-list
-
-请求体：
-{
-  "email": "c@xx.com"
-}
-
-成功返回：
-{ "success": true, "id": 3 }
-
-5.3 删除收件人邮箱
-DELETE /api/remind-email-list/:id
-
-成功返回：
-{ "success": true }
 
 错误返回：
-{ "success": false, "message": "错误信息" }
+{
+  "success": false,
+  "message": "该平台下已存在相同账号"
+}
 
-字段说明：
-- email：收件人邮箱，单条记录
+7.6 删除账号
+DELETE /api/lead-sources/accounts/:id
 
-说明：所有意向级别的超期提醒都发给该邮箱列表。
+成功返回：
+{
+  "success": true,
+  "message": "账号删除成功",
+  "data": {
+    "id": 8,
+    "platform": "抖音",
+    "account": "新账号"
+  }
+}
+
+错误返回：
+{
+  "success": false,
+  "message": "该账号下还有 5 条线索，无法删除"
+}
 
 ============================
-7. 鉴权错误码说明
+权限说明
 ============================
 
-所有业务接口（除注册、登录外）都需要在请求头中携带有效的 JWT Token：
+admin: 管理员，可以查看和操作所有数据
+sales: 销售，只能查看分配给自己的线索
+service: 客服，只能查看自己登记的线索
 
-Headers:
-Authorization: Bearer your_jwt_token
+重要权限保护机制：
+- 线索的跟进人分配（current_follower）一旦确定，任何用户（包括管理员）都不能通过编辑线索来修改
+- 这确保了销售人员的权限不会因为管理员的操作而丢失
+- 管理员可以为任何线索创建跟进记录，但不会影响原有的跟进人分配
+- 只有通过专门的重新分配功能才能更改线索的跟进人
 
-常见错误码：
-- 401: 未携带有效token
-  {
-    "code": 401,
-    "message": "未携带有效token"
+============================
+8. OCR图片识别与批量导入
+============================
+
+8.1 OCR图片识别（异步模式）
+POST /api/ocr/recognize
+请求类型：multipart/form-data
+参数：
+- image: 图片文件（支持jpg、jpeg、png、gif格式，最大10MB）
+
+成功返回：
+{
+  "success": true,
+  "taskId": "ocr_1735123456789_abc123",
+  "message": "图片已提交处理，请使用任务ID查询处理状态",
+  "performance": {
+    "totalTime": "15ms"
   }
+}
 
-- 401: token无效或已过期
-  {
-    "code": 401,
-    "message": "token无效或已过期"
+错误返回：
+{
+  "success": false,
+  "error": "不支持的文件格式"
+}
+
+使用说明：
+- 该接口采用异步处理模式，立即返回任务ID
+- 需要通过任务状态查询接口获取识别结果
+- 支持识别客户信息表格，自动转换为线索数据
+- 自动处理日期格式转换（MMDD -> YYYY-MM-DD）
+- 内置去重机制，避免重复导入
+
+数据格式要求：
+- 客户名称必须符合格式：MMDD/客户昵称
+- 示例：0827/张三、0827/李四/已成交
+- 日期部分必须是4位数字（MMDD格式）
+- 月份范围：01-12，日期范围：01-31
+- 斜杠后必须有客户昵称内容
+- 不符合格式的数据将被跳过，不会创建线索
+
+自动登记默认值：
+- 是否联系：1（已联系）
+- 意向等级：低
+- 来源平台：视频号
+- 来源账号：明哥揀粤港车
+- 跟进人：用户ID为1的用户
+- 登记人：用户ID为2的用户（批量模式）
+
+8.2 查询OCR任务状态
+GET /api/ocr/status/:taskId
+
+成功返回（处理中）：
+{
+  "success": true,
+  "taskId": "ocr_1735123456789_abc123",
+  "status": "processing",
+  "fileName": "customer_list.jpg",
+  "progress": "正在进行AI识别...",
+  "performance": {
+    "queryTime": "5ms"
   }
+}
 
-使用流程：
-1. 先调用 POST /api/users/register 注册用户
-2. 再调用 POST /api/users/login 登录获取 token
-3. 后续所有业务接口都在请求头中携带 Authorization: Bearer token 
+成功返回（已完成）：
+{
+  "success": true,
+  "taskId": "ocr_1735123456789_abc123",
+  "status": "completed",
+  "fileName": "customer_list.jpg",
+  "result": [
+    {
+      "customer_name": "0825/张三"
+    },
+    {
+      "customer_name": "0825/李四"
+    }
+  ],
+  "leadRegistration": {
+    "total": 25,
+    "success": 23,
+    "failed": 2,
+    "duplicated": 0,
+    "errors": [
+      "客户 0825/张三: 重复的联系方式"
+    ]
+  },
+  "lead_time": "2025-08-25 00:00:00",
+  "performance": {
+    "queryTime": "5ms",
+    "totalTime": "3245ms",
+    "base64ConvertTime": "156ms",
+    "apiCallTime": "2890ms"
+  }
+}
+
+失败返回：
+{
+  "success": true,
+  "taskId": "ocr_1735123456789_abc123",
+  "status": "failed",
+  "fileName": "customer_list.jpg",
+  "error": "AI识别服务暂时不可用",
+  "performance": {
+    "queryTime": "5ms"
+  }
+}
+
+任务不存在：
+{
+  "success": false,
+  "error": "任务不存在或已过期",
+  "performance": {
+    "totalTime": "5ms"
+  }
+}
+
+状态说明：
+- pending: 任务已创建，等待处理
+- processing: 正在处理中
+- completed: 处理完成
+- failed: 处理失败
+
+8.3 查询OCR任务记录历史
+GET /api/ocr/records
+查询参数：
+- page: 页码（默认1）
+- limit: 每页数量（默认10，最大100）
+- status: 任务状态筛选（pending/processing/completed/failed）
+- startDate: 开始日期（YYYY-MM-DD格式）
+- endDate: 结束日期（YYYY-MM-DD格式）
+
+示例请求：
+GET /api/ocr/records?page=1&limit=20&status=completed&startDate=2024-01-01&endDate=2024-12-31
+
+成功返回：
+{
+  "success": true,
+  "data": {
+    "records": [
+      {
+        "id": 1,
+        "task_id": "ocr_1735123456789_abc123",
+        "file_name": "customer_list.jpg",
+        "file_size": 2048576,
+        "task_status": "completed",
+        "start_time": "2024-08-25T10:30:00.000Z",
+        "end_time": "2024-08-25T10:30:03.245Z",
+        "total_time_ms": 3245,
+        "api_call_time_ms": 2890,
+        "base64_convert_time_ms": 156,
+        "customers_extracted": 25,
+        "customers_imported": 23,
+        "customers_duplicated": 2,
+        "customers_failed": 0,
+        "extracted_data": [
+          {
+            "customer_name": "0825/张三"
+          },
+          {
+            "customer_name": "0825/李四"
+          }
+        ],
+        "error_message": null,
+        "error_details": null,
+        "created_at": "2024-08-25T10:30:00.000Z",
+        "updated_at": "2024-08-25T10:30:03.245Z"
+      }
+    ],
+    "pagination": {
+      "total": 156,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 8
+    }
+  },
+  "performance": {
+    "totalTime": "45ms"
+  }
+}
+
+错误返回：
+{
+  "success": false,
+  "error": "查询任务记录失败",
+  "performance": {
+    "totalTime": "12ms"
+  }
+}
+
+使用说明：
+- 支持多条件筛选和分页查询
+- 记录包含完整的任务执行信息和性能指标
+- 可用于监控OCR任务的执行情况和性能分析
+- 提供详细的客户数据统计信息
+
+OCR功能特点：
+1. 异步处理：避免长时间等待，提升用户体验
+2. 智能识别：基于AI技术，准确识别表格中的客户信息
+3. 自动转换：智能处理日期格式和数据类型
+4. 去重保护：避免重复导入相同客户信息
+5. 详细记录：完整记录每次任务的执行详情
+6. 性能监控：提供详细的性能指标和统计信息
+7. 错误处理：完善的错误处理和诊断机制

@@ -77,8 +77,50 @@ exports.createLead = async (req, res) => {
     const data = req.body;
     // 日志打印入参
     console.log('收到新增线索请求:', JSON.stringify(data));
+    
+    // 检查是否为批量登记模式
+    const isBatchMode = req.headers['x-batch-mode'] === 'true';
+    let registrantId;
+    
+    if (isBatchMode) {
+      // 批量登记模式：登记人固定为ID为2的用户
+      registrantId = 2;
+      console.log('批量登记模式：登记人ID设置为', registrantId);
+      
+      // 安全检查：验证ID为2的用户是否存在
+      try {
+        const User = require('../models/user');
+        const batchUser = await User.findByPk(2);
+        if (!batchUser) {
+          await transaction.rollback();
+          const totalTime = Date.now() - startTime;
+          return res.status(400).json({
+            success: false,
+            message: '批量登记模式配置错误：ID为2的用户不存在',
+            performance: {
+              totalTime: `${totalTime}ms`
+            }
+          });
+        }
+      } catch (error) {
+        await transaction.rollback();
+        const totalTime = Date.now() - startTime;
+        return res.status(500).json({
+          success: false,
+          message: '批量登记模式验证失败',
+          performance: {
+            totalTime: `${totalTime}ms`
+          }
+        });
+      }
+    } else {
+      // 正常模式：登记人为当前登录用户
+      registrantId = req.user.id;
+      console.log('正常模式：登记人ID设置为', registrantId);
+    }
+    
     // 先自动填充登记人
-    data.follow_up_person = req.user.id;
+    data.follow_up_person = registrantId;
     // 参数校验
     const validation = validateLeadData(data);
     if (!validation.valid) {
@@ -110,6 +152,33 @@ exports.createLead = async (req, res) => {
     
     // 记录数据库操作开始时间
     const dbStartTime = Date.now();
+    
+    // 去重检查：对完整contact_name进行精确匹配
+    if (data.contact_name) {
+      const contactName = data.contact_name.trim();
+      
+      const existingLead = await CustomerLead.findOne({
+        where: {
+          contact_name: contactName
+        },
+        transaction
+      });
+      
+      if (existingLead) {
+        await transaction.rollback();
+        const totalTime = Date.now() - startTime;
+        console.log(`去重检查：发现重复的contact_name: ${contactName}，跳过创建`);
+        return res.json({
+          success: true,
+          duplicate: true,
+          message: `联系名称 ${contactName} 已存在，跳过创建`,
+          existingId: existingLead.id,
+          performance: {
+            totalTime: `${totalTime}ms`
+          }
+        });
+      }
+    }
     
     // 1. 创建线索记录
     const lead = await CustomerLead.create(data, { transaction });
@@ -226,7 +295,12 @@ exports.getLeads = async (req, res) => {
     if (is_deal !== undefined) where.is_deal = is_deal;
     if (is_contacted !== undefined) where.is_contacted = is_contacted;
     if (date_from && date_to) {
-      where.lead_time = { [Op.between]: [date_from, date_to] };
+      where.lead_time = { 
+        [Op.between]: [
+          `${date_from} 00:00:00`, 
+          `${date_to} 23:59:59`
+        ] 
+      };
     }
     const cleanKeyword = typeof keyword === 'string' ? keyword.trim() : '';
     if (cleanKeyword) {
@@ -604,8 +678,10 @@ exports.updateLead = async (req, res) => {
       delete data.follow_up_person;
     }
     
-    // 自动用当前登录用户ID覆盖 current_follower
-    data.current_follower = req.user.id;
+    // 禁止修改跟进人，保持原有的分配关系
+    if ('current_follower' in data) {
+      delete data.current_follower;
+    }
 
     // 验证更新数据
     if (data.intention_level && !['高', '中', '低'].includes(data.intention_level)) {
@@ -930,6 +1006,264 @@ exports.deleteLead = async (req, res) => {
     res.status(statusCode).json({
       success: false,
       message: errorMessage,
+      performance: {
+        totalTime: `${totalTime}ms`
+      }
+    });
+  }
+};
+
+// 导出客户线索
+exports.exportLeads = async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const {
+      date_from,
+      date_to,
+      intention_level,
+      is_deal,
+      is_contacted,
+      keyword,
+      contact_name,
+      customer_nickname
+    } = req.query;
+    
+    // 验证时间区间参数
+    if (!date_from || !date_to) {
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '必须提供时间区间参数 date_from 和 date_to',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    // 验证时间格式
+    const dateFrom = new Date(date_from);
+    const dateTo = new Date(date_to);
+    if (isNaN(dateFrom.getTime()) || isNaN(dateTo.getTime())) {
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '时间格式不正确，请使用 YYYY-MM-DD 格式',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    // 构建查询条件 - 修复时间区间查询，确保包含完整的天数
+    const where = {
+      lead_time: { 
+        [Op.between]: [
+          `${date_from} 00:00:00`, 
+          `${date_to} 23:59:59`
+        ] 
+      }
+    };
+    
+    // 添加其他筛选条件
+    if (intention_level) where.intention_level = intention_level;
+    if (is_deal !== undefined) where.is_deal = is_deal;
+    if (is_contacted !== undefined) where.is_contacted = is_contacted;
+    
+    // 关键词搜索
+    const cleanKeyword = typeof keyword === 'string' ? keyword.trim() : '';
+    if (cleanKeyword) {
+      where[Op.or] = [
+        { customer_nickname: { [Op.like]: `%${cleanKeyword}%` } },
+        { contact_account: { [Op.like]: `%${cleanKeyword}%` } },
+        { source_account: { [Op.like]: `%${cleanKeyword}%` } },
+        { 
+          contact_name: { 
+            [Op.and]: [
+              { [Op.ne]: null },
+              { [Op.like]: `%${cleanKeyword}%` }
+            ]
+          } 
+        }
+      ];
+    }
+    
+    // 客户昵称模糊检索
+    if (customer_nickname) {
+      where.customer_nickname = { [Op.like]: `%${customer_nickname}%` };
+    }
+    
+    // 联系名称模糊检索
+    if (contact_name) {
+      const cleanContactName = contact_name.trim();
+      if (cleanContactName) {
+        where.contact_name = { 
+          [Op.and]: [
+            { [Op.ne]: null },
+            { [Op.like]: `%${cleanContactName}%` }
+          ]
+        };
+      }
+    }
+    
+    // 基于角色的权限控制
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    console.log(`导出权限控制 - 角色: ${userRole}, 用户ID: ${userId}`);
+    
+    if (userRole === 'service') {
+      // 客服只能导出自己登记的线索
+      where.follow_up_person = userId.toString();
+      console.log('权限控制: 客服用户，只能导出自己登记的线索');
+    } else if (userRole === 'sales') {
+      // 销售只能导出分配给自己的线索
+      where.current_follower = userId;
+      console.log('权限控制: 销售用户，只能导出分配给自己的线索');
+    } else if (userRole === 'admin') {
+      // 管理员可以导出所有线索
+      console.log('权限控制: 管理员用户，可以导出所有线索');
+    } else {
+      // 其他角色默认只能导出自己登记的线索
+      where.follow_up_person = userId.toString();
+      console.log('权限控制: 其他角色用户，只能导出自己登记的线索');
+    }
+    
+    const dbStartTime = Date.now();
+    
+    // 查询所有符合条件的线索（不分页）
+    const leads = await CustomerLead.findAll({
+      where,
+      order: [['lead_time', 'DESC']],
+      include: [
+        {
+          model: User,
+          as: 'currentFollowerUser',
+          attributes: ['id', 'nickname', 'username']
+        }
+      ],
+      attributes: [
+        'id',
+        'customer_nickname',
+        'source_platform',
+        'source_account',
+        'contact_account',
+        'contact_name',
+        'lead_time',
+        'is_contacted',
+        'intention_level',
+        'follow_up_person',
+        'is_deal',
+        'deal_date',
+        'created_at',
+        'updated_at',
+        'need_followup',
+        'end_followup',
+        'end_followup_reason',
+        'current_follower'
+      ]
+    });
+
+    // 批量查询最新跟进记录
+    const leadIds = leads.map(lead => lead.id);
+    const latestFollowUps = await FollowUpRecord.findAll({
+      attributes: [
+        'lead_id',
+        'follow_up_time',
+        'follow_up_content',
+        'follow_up_method',
+        'follow_up_result',
+        'follow_up_person_id'
+      ],
+      where: {
+        lead_id: { [Op.in]: leadIds }
+      },
+      include: [{
+        model: User,
+        as: 'followUpPerson',
+        attributes: ['id', 'nickname']
+      }],
+      order: [['follow_up_time', 'DESC']],
+      raw: true,
+      nest: true
+    });
+
+    // 构建跟进记录映射，取每个线索的最新记录
+    const followUpMap = {};
+    latestFollowUps.forEach(followUp => {
+      if (!followUpMap[followUp.lead_id] || 
+          new Date(followUp.follow_up_time) > new Date(followUpMap[followUp.lead_id].follow_up_time)) {
+        followUpMap[followUp.lead_id] = followUp;
+      }
+    });
+
+    // 处理数据，添加最新跟进信息
+    const exportData = leads.map(lead => {
+      const leadData = lead.toJSON();
+      const latestFollowUp = followUpMap[leadData.id];
+      
+      return {
+        // 基本信息
+        id: leadData.id,
+        customer_nickname: leadData.customer_nickname,
+        source_platform: leadData.source_platform,
+        source_account: leadData.source_account,
+        contact_account: leadData.contact_account,
+        contact_name: leadData.contact_name,
+        lead_time: leadData.lead_time,
+        is_contacted: leadData.is_contacted === 1 ? '是' : '否',
+        intention_level: leadData.intention_level,
+        follow_up_person: leadData.follow_up_person,
+        is_deal: leadData.is_deal === 1 ? '是' : '否',
+        deal_date: leadData.deal_date,
+        created_at: leadData.created_at,
+        updated_at: leadData.updated_at,
+        
+        // 跟进状态
+        need_followup: leadData.need_followup === 1 ? '是' : '否',
+        end_followup: leadData.end_followup === 1 ? '是' : '否',
+        end_followup_reason: leadData.end_followup_reason,
+        
+        // 当前跟进人
+        current_follower: leadData.currentFollowerUser ? leadData.currentFollowerUser.nickname : null,
+        current_follower_username: leadData.currentFollowerUser ? leadData.currentFollowerUser.username : null,
+        
+        // 最新跟进情况
+        latest_follow_up_time: latestFollowUp ? latestFollowUp.follow_up_time : null,
+        latest_follow_up_content: latestFollowUp ? latestFollowUp.follow_up_content : null,
+        latest_follow_up_method: latestFollowUp ? latestFollowUp.follow_up_method : null,
+        latest_follow_up_result: latestFollowUp ? latestFollowUp.follow_up_result : null,
+        latest_follow_up_person: latestFollowUp && latestFollowUp.followUpPerson ? latestFollowUp.followUpPerson.nickname : null
+      };
+    });
+    
+    const dbEndTime = Date.now();
+    const totalTime = Date.now() - startTime;
+    const dbTime = dbEndTime - dbStartTime;
+    
+    console.log(`导出客户线索完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms, 导出数量: ${exportData.length}`);
+    
+    res.json({ 
+      success: true, 
+      data: exportData,
+      total: exportData.length,
+      date_range: {
+        from: date_from,
+        to: date_to
+      },
+      performance: {
+        totalTime: `${totalTime}ms`,
+        dbTime: `${dbTime}ms`
+      }
+    });
+    
+  } catch (error) {
+    console.error('导出客户线索失败:', error);
+    const totalTime = Date.now() - startTime;
+    res.status(500).json({
+      success: false,
+      message: '导出失败',
+      error: error.message,
       performance: {
         totalTime: `${totalTime}ms`
       }

@@ -1,0 +1,79 @@
+{
+    "success": true,
+    "data": {
+        "records": [
+            {
+                "id": 4,
+                "task_id": "mes9j89vu9qcupz4q47",
+                "file_name": "121314.jpg",
+                "file_size": 450013,
+                "file_type": "image/jpeg",
+                "task_status": "completed",
+                "start_time": "2025-08-26 16:07:09",
+                "end_time": "2025-08-26 16:09:09",
+                "total_time_ms": 70913,
+                "api_call_time_ms": 69511,
+                "base64_convert_time_ms": 2,
+                "customers_extracted": 13,
+                "customers_imported": 0,
+                "customers_duplicated": 0,
+                "customers_failed": 0,
+                "extracted_data": [
+                    {
+                        "customer_name": "0824/A .9"
+                    },
+                    {
+                        "customer_name": "0824/A7. 源生达"
+                    },
+                    {
+                        "customer_name": "0824/mokiop"
+                    },
+                    {
+                        "customer_name": "0824/Shermay 婷"
+                    },
+                    {
+                        "customer_name": "0824/俊"
+                    },
+                    {
+                        "customer_name": "0824/刘汉彬"
+                    },
+                    {
+                        "customer_name": "0824/吴校佳"
+                    },
+                    {
+                        "customer_name": "0824/威哥"
+                    },
+                    {
+                        "customer_name": "0824/平安"
+                    },
+                    {
+                        "customer_name": "0824/拉灯（张飞）"
+                    },
+                    {
+                        "customer_name": "0824/杨跃/揽胜行政版"
+                    },
+                    {
+                        "customer_name": "0824/燊榮記"
+                    },
+                    {
+                        "customer_name": "0824/阿霏"
+                    }
+                ],
+                "lead_time": "2025-08-24 00:00:00",
+                "error_message": null,
+                "error_details": null,
+                "created_at": "2025-08-26 16:07:09",
+                "updated_at": "2025-08-26 16:09:09"
+            }
+        ],
+        "pagination": {
+            "total": 1,
+            "page": 1,
+            "limit": 10,
+            "totalPages": 1
+        }
+    },
+    "performance": {
+        "totalTime": "505ms"
+    }
+}
