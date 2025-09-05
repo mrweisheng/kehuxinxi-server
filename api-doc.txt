@@ -1156,3 +1156,85 @@ OCR功能特点：
 5. 详细记录：完整记录每次任务的执行详情
 6. 性能监控：提供详细的性能指标和统计信息
 7. 错误处理：完善的错误处理和诊断机制
+
+============================
+4. 平台账号统计
+============================
+
+4.1 获取平台账号统计概览
+GET /api/statistics/platform-account-summary
+
+功能说明：
+统计截止到当前的所有线索数据分布情况，包括：
+- 总线索数量
+- 各平台线索数量分布
+- 各平台下的账号统计详情
+- 未知平台和未知账号的数据统计
+
+请求头：
+Authorization: Bearer <token>
+
+成功返回：
+{
+  "success": true,
+  "data": {
+    "total_leads": 1000,
+    "platforms": {
+      "抖音": {
+        "total_leads": 500,
+        "known_accounts": {
+          "香港华星两地牌": 200,
+          "其他账号名": 150
+        },
+        "unknown_accounts": 150,
+        "account_count": 2
+      },
+      "视频号": {
+        "total_leads": 300,
+        "known_accounts": {
+          "香港华星两地牌": 300
+        },
+        "unknown_accounts": 0,
+        "account_count": 1
+      },
+      "未知平台": {
+        "total_leads": 200,
+        "known_accounts": {},
+        "unknown_accounts": 200,
+        "account_count": 0
+      }
+    }
+  },
+  "performance": {
+    "totalTime": "50ms",
+    "dbTime": "30ms"
+  }
+}
+
+返回字段说明：
+- total_leads: 数据库中的总线索数量
+- platforms: 按平台分组的统计数据
+  - total_leads: 该平台的总线索数量
+  - known_accounts: 已知账号及其线索数量的键值对
+  - unknown_accounts: 该平台下未知账号的线索数量
+  - account_count: 该平台下已知账号的数量
+- performance: 性能统计信息
+
+数据分类逻辑：
+1. 完整信息：有平台 + 有账号信息
+2. 部分信息：有平台 + 无账号信息（归类为该平台的"未知账号"）
+3. 缺失信息：无平台 + 无账号信息（归类为"未知平台"）
+
+未知值定义：
+- 平台为空、null或"未知"时，归类为"未知平台"
+- 账号为空、null或"未知"时，归类为对应平台下的"未知账号"
+
+错误返回：
+{
+  "success": false,
+  "message": "获取平台账号统计失败",
+  "error": "具体错误信息",
+  "performance": {
+    "totalTime": "10ms"
+  }
+}

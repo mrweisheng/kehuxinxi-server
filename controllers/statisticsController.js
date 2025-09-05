@@ -573,3 +573,106 @@ exports.getLastWeekStats = async (req, res) => {
     });
   }
 };
+
+// 平台账号统计概览
+exports.getPlatformAccountSummary = async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const dbStartTime = Date.now();
+    
+    // 1. 总线索数量
+    const totalLeads = await CustomerLead.count();
+    
+    // 2. 按平台和账号统计线索数量
+    const platformAccountQuery = `
+      SELECT 
+        CASE 
+          WHEN cl.source_platform IS NULL OR cl.source_platform = '' OR cl.source_platform = '未知' 
+          THEN '未知平台'
+          ELSE cl.source_platform
+        END as platform,
+        CASE 
+          WHEN cl.source_account IS NULL OR cl.source_account = '' OR cl.source_account = '未知' 
+          THEN '未知账号'
+          ELSE cl.source_account
+        END as account,
+        COUNT(*) as lead_count
+      FROM customer_leads cl
+      GROUP BY 
+        CASE 
+          WHEN cl.source_platform IS NULL OR cl.source_platform = '' OR cl.source_platform = '未知' 
+          THEN '未知平台'
+          ELSE cl.source_platform
+        END,
+        CASE 
+          WHEN cl.source_account IS NULL OR cl.source_account = '' OR cl.source_account = '未知' 
+          THEN '未知账号'
+          ELSE cl.source_account
+        END
+      ORDER BY platform, lead_count DESC
+    `;
+    
+    const platformAccountResults = await CustomerLead.sequelize.query(platformAccountQuery, {
+      type: QueryTypes.SELECT
+    });
+    
+    const dbEndTime = Date.now();
+    
+    // 3. 组织数据结构
+    const platformStats = {};
+    
+    platformAccountResults.forEach(row => {
+      const platform = row.platform;
+      const account = row.account;
+      const leadCount = parseInt(row.lead_count);
+      
+      if (!platformStats[platform]) {
+        platformStats[platform] = {
+          total_leads: 0,
+          known_accounts: {},
+          unknown_accounts: 0,
+          account_count: 0
+        };
+      }
+      
+      platformStats[platform].total_leads += leadCount;
+      
+      if (account === '未知账号') {
+        platformStats[platform].unknown_accounts = leadCount;
+      } else {
+        platformStats[platform].known_accounts[account] = leadCount;
+        platformStats[platform].account_count += 1;
+      }
+    });
+    
+    const totalTime = Date.now() - startTime;
+    const dbTime = dbEndTime - dbStartTime;
+    
+    console.log(`获取平台账号统计完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms`);
+    
+    res.json({
+      success: true,
+      data: {
+        total_leads: totalLeads,
+        platforms: platformStats
+      },
+      performance: {
+        totalTime: `${totalTime}ms`,
+        dbTime: `${dbTime}ms`
+      }
+    });
+    
+  } catch (error) {
+    console.error('获取平台账号统计失败:', error);
+    const totalTime = Date.now() - startTime;
+    res.status(500).json({
+      success: false,
+      message: '获取平台账号统计失败',
+      error: error.message,
+      performance: {
+        totalTime: `${totalTime}ms`
+      }
+    });
+  }
+};

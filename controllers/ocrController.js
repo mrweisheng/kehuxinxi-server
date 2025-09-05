@@ -1,11 +1,10 @@
+require('dotenv').config();
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const OpenAI = require('openai');
 const { Op } = require('sequelize');
 const OcrTaskRecord = require('../models/ocrTaskRecordModel');
 const leadController = require('./leadController');
-require('dotenv').config();
 
 // 内存任务队列
 const ocrTasks = new Map();
@@ -84,11 +83,20 @@ const upload = multer({
   fileFilter: fileFilter
 });
 
-// 初始化OpenAI客户端（豆包API）
-const openai = new OpenAI({
-  apiKey: process.env.OCR_API_KEY,
-  baseURL: process.env.OCR_BASE_URL,
-});
+// OpenAI 客户端惰性初始化（硬编码配置）
+let openaiClient = null;
+const getOpenAIClient = () => {
+  if (openaiClient) return openaiClient;
+
+  // 惰性引入 SDK，避免 require 钩子在初始化前介入
+  const OpenAI = require('openai');
+
+  openaiClient = new OpenAI({
+    apiKey: '53c21a66-ebd5-4fec-875e-2fa8a8ba055b',
+    baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+  });
+  return openaiClient;
+};
 
 // 将图片文件转换为base64
 const imageToBase64 = (filePath) => {
@@ -363,7 +371,7 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
 
     // 调用豆包API
     const apiCallStart = Date.now();
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       messages: [
         {
           role: 'user',
@@ -378,7 +386,7 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
           ],
         },
       ],
-      model: process.env.OCR_MODEL,
+      model: 'doubao-seed-1-6-250615',
     });
     const apiCallTime = Date.now() - apiCallStart;
     
