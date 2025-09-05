@@ -14,4 +14,7 @@ router.get('/lead-sources/trend', statisticsController.getLeadSourceTrend);
 // 上周统计
 router.get('/last-week', statisticsController.getLastWeekStats);
 
+// 平台账号统计概览
+router.get('/platform-account-summary', statisticsController.getPlatformAccountSummary);
+
 module.exports = router; 
