@@ -196,6 +196,10 @@ GET /api/leads?page=1&page_size=20&intention_level=高&is_deal=0&keyword=张三&
 - date_from: 开始日期
 - date_to: 结束日期
 
+排序规则：
+- 启用跟进的线索(enable_followup=1)排在前面
+- 然后按进线索时间倒序排列
+
 成功返回：
 {
   "success": true,
@@ -219,6 +223,7 @@ GET /api/leads?page=1&page_size=20&intention_level=高&is_deal=0&keyword=张三&
       "need_followup": 1,
       "end_followup": 0,
       "end_followup_reason": null,
+      "enable_followup": 1,
       "current_follower": {
         "id": 1,
         "nickname": "销售1",
@@ -267,6 +272,7 @@ GET /api/leads/export?date_from=2024-01-01&date_to=2024-12-31&intention_level=�
       "need_followup": "是",
       "end_followup": "否",
       "end_followup_reason": null,
+      "enable_followup": "是",
       "current_follower": "销售1",
       "current_follower_username": "sales1",
       "latest_follow_up_time": "2024-01-02 10:00:00",
@@ -309,7 +315,15 @@ GET /api/leads/:id
     "is_deal": 0,
     "deal_date": null,
     "created_at": "2024-01-01T10:00:00.000Z",
-    "updated_at": "2024-01-01T10:00:00.000Z"
+    "updated_at": "2024-01-01T10:00:00.000Z",
+    "need_followup": 1,
+    "end_followup": 0,
+    "end_followup_reason": null,
+    "enable_followup": 1,
+    "latest_follow_up": {
+      "follow_up_time": "2024-01-02 10:00:00",
+      "follow_up_content": "客户对产品很感兴趣"
+    }
   }
 }
 
@@ -385,6 +399,131 @@ DELETE /api/leads/:id
   "success": true,
   "message": "线索删除成功"
 }
+
+1.7 启用跟进
+POST /api/leads/:id/enable-followup
+
+功能说明：
+为指定线索启用跟进功能。启用后，该线索将参与定时跟进提醒检查。
+
+权限控制：
+- 管理员：可以启用所有线索的跟进
+- 客服：只能启用自己登记的线索
+- 销售：只能启用分配给自己的线索
+- 其他角色：只能启用自己登记的线索
+
+参数：无需请求体参数
+
+成功返回：
+{
+  "success": true,
+  "message": "跟进功能启用成功",
+  "followUpId": 123,
+  "performance": {
+    "totalTime": "150ms",
+    "dbTime": "120ms"
+  }
+}
+
+错误返回：
+{
+  "success": false,
+  "message": "该线索已经启用跟进",
+  "performance": {
+    "totalTime": "50ms"
+  }
+}
+
+{
+  "success": false,
+  "message": "您没有权限启用该线索的跟进",
+  "performance": {
+    "totalTime": "80ms"
+  }
+}
+
+1.8 禁用跟进
+POST /api/leads/:id/disable-followup
+
+功能说明：
+为指定线索禁用跟进功能。禁用后，该线索将不再参与定时跟进提醒检查。同时设置终结跟进状态。
+
+权限控制：
+- 管理员：可以禁用所有线索的跟进
+- 客服：只能禁用自己登记的线索
+- 销售：只能禁用分配给自己的线索
+- 其他角色：只能禁用自己登记的线索
+
+参数（JSON）：
+{
+  "end_followup_reason": "客户已明确表示不需要跟进",
+  "create_follow_up": true,
+  "follow_up_time": "2024-01-02 10:00:00",
+  "follow_up_method": "电话",
+  "follow_up_content": "客户明确表示不需要跟进",
+  "follow_up_result": "终结跟进"
+}
+
+必填字段说明：
+- end_followup_reason: 终结跟进原因（必填，字符串类型）
+
+可选字段说明：
+- create_follow_up: 是否创建跟进记录（可选，布尔类型，默认false）
+- follow_up_time: 跟进时间（可选，默认当前时间）
+- follow_up_method: 跟进方式（可选，默认"终结跟进"）
+- follow_up_content: 跟进内容（当create_follow_up=true时必填）
+- follow_up_result: 跟进结果（可选，默认"终结跟进"）
+
+业务逻辑：
+- 设置 end_followup = 1（终结跟进）
+- 设置 enable_followup = 0（禁用跟进）
+- 设置 need_followup = 0（无需跟进）
+- 如果 create_follow_up = true，创建自定义跟进记录
+- 如果 create_follow_up = false 或未设置，创建默认的终结跟进记录
+
+成功返回：
+{
+  "success": true,
+  "message": "跟进功能禁用成功",
+  "updatedLead": true,
+  "followUpId": 124,
+  "createdFollowUp": true,
+  "performance": {
+    "totalTime": "180ms",
+    "dbTime": "140ms"
+  }
+}
+
+错误返回：
+{
+  "success": false,
+  "message": "禁用跟进时必须提供禁用原因",
+  "performance": {
+    "totalTime": "30ms"
+  }
+}
+
+{
+  "success": false,
+  "message": "该线索已经禁用跟进",
+  "performance": {
+    "totalTime": "60ms"
+  }
+}
+
+{
+  "success": false,
+  "message": "您没有权限禁用该线索的跟进",
+  "performance": {
+    "totalTime": "90ms"
+  }
+}
+
+业务逻辑说明：
+- 启用跟进时：设置enable_followup=1，重置end_followup=0和end_followup_reason=null
+- 禁用跟进时：设置enable_followup=0，同时设置end_followup=1和end_followup_reason，并重置need_followup=0
+- 两个操作都会创建相应的跟进记录，记录操作历史
+- 只有enable_followup=1的线索才会被定时检查服务处理
 
 ============================
 2. 跟进记录管理
