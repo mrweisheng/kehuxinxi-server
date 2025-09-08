@@ -39,7 +39,11 @@ router.get('/export', authMiddleware, leadController.exportLeads);
 router.get('/:id', authMiddleware, leadController.getLeadDetail);
 // 编辑线索
 router.put('/:id', authMiddleware, leadController.updateLead);
+// 启用跟进
+router.post('/:id/enable-followup', authMiddleware, leadController.enableFollowup);
+// 禁用跟进
+router.post('/:id/disable-followup', authMiddleware, leadController.disableFollowup);
 // 删除线索
 router.delete('/:id', authMiddleware, leadController.deleteLead);
 
-module.exports = router; 
+module.exports = router;

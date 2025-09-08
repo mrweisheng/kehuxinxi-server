@@ -89,6 +89,13 @@ const CustomerLead = sequelize.define('customer_leads', {
     allowNull: true,
     comment: '当前跟进人用户ID'
   },
+  // 新增字段：是否启用跟进
+  enable_followup: {
+    type: DataTypes.TINYINT,
+    allowNull: false,
+    defaultValue: 0,
+    comment: '是否启用跟进（1=启用，0=不启用）'
+  },
   created_at: {
     type: DataTypes.DATE,
     allowNull: false,
@@ -122,4 +129,4 @@ CustomerLead.associate = (models) => {
   });
 };
 
-module.exports = CustomerLead; 
+module.exports = CustomerLead;
