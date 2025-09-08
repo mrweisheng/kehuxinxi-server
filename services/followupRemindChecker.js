@@ -42,9 +42,9 @@ async function checkOverdueLeads() {
     const globalEmailList = emailRecords.map(e => e.email);
     const now = dayjs();
     
-    // 先将所有未终结线索的need_followup重置为0
+    // 先将所有启用跟进且未终结线索的need_followup重置为0
     await CustomerLead.update({ need_followup: 0 }, { 
-      where: { end_followup: 0 },
+      where: { end_followup: 0, enable_followup: 1 },
       transaction 
     });
     
@@ -52,9 +52,9 @@ async function checkOverdueLeads() {
 
     for (const config of configs) {
       try {
-        // 查找该意向级别所有线索及其最新跟进时间
+        // 查找该意向级别所有启用跟进且未终结的线索及其最新跟进时间
         const leads = await CustomerLead.findAll({
-          where: { intention_level: config.intention_level, end_followup: 0 },
+          where: { intention_level: config.intention_level, end_followup: 0, enable_followup: 1 },
           attributes: ['id', 'customer_nickname', 'intention_level', 'lead_time', 'follow_up_person', 'contact_account'],
           include: [{
             model: FollowUpRecord,
@@ -267,4 +267,4 @@ module.exports = {
   sendOverdueRemindEmail,
   startScheduledCheck,
   updateNeedFollowupByLeadId
-}; 
+};
