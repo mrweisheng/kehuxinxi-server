@@ -368,13 +368,13 @@ exports.getLeads = async (req, res) => {
       configMap[cfg.intention_level] = cfg.interval_days;
     });
     
-    // 恢复数据库 need_followup 字段排序
+    // 修改排序：启用跟进的线索排在前面，然后按进线索时间排序
     const { count, rows } = await CustomerLead.findAndCountAll({
       where,
       offset: Number(offset),
       limit: Number(page_size),
       order: [
-        ['need_followup', 'DESC'],
+        ['enable_followup', 'DESC'],
         ['lead_time', 'DESC']
       ],
       include: [
@@ -402,7 +402,8 @@ exports.getLeads = async (req, res) => {
         'need_followup',
         'end_followup',
         'end_followup_reason',
-        'current_follower'
+        'current_follower',
+        'enable_followup'
       ]
     });
 
@@ -551,7 +552,8 @@ exports.getLeadDetail = async (req, res) => {
         'need_followup',
         'end_followup',
         'end_followup_reason',
-        'current_follower'
+        'current_follower',
+        'enable_followup'
       ]
     });
     
@@ -1160,7 +1162,8 @@ exports.exportLeads = async (req, res) => {
         'need_followup',
         'end_followup',
         'end_followup_reason',
-        'current_follower'
+        'current_follower',
+        'enable_followup'
       ]
     });
 
@@ -1263,6 +1266,364 @@ exports.exportLeads = async (req, res) => {
     res.status(500).json({
       success: false,
       message: '导出失败',
+      error: error.message,
+      performance: {
+        totalTime: `${totalTime}ms`
+      }
+    });
+  }
+};
+
+// 启用跟进
+exports.enableFollowup = async (req, res) => {
+  const startTime = Date.now();
+  let transaction;
+  try {
+    const id = req.params.id;
+    
+    // 参数验证
+    if (!id || isNaN(Number(id))) {
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '无效的线索ID',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    // 初始化事务
+    transaction = await CustomerLead.sequelize.transaction();
+    
+    // 权限控制检查
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    console.log(`启用跟进权限检查 - 角色: ${userRole}, 用户ID: ${userId}, 线索ID: ${id}`);
+    
+    // 先查询线索信息进行权限检查
+    const existingLead = await CustomerLead.findByPk(id, { transaction });
+    if (!existingLead) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(404).json({ 
+        success: false, 
+        message: '未找到该线索',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    const leadData = existingLead.toJSON();
+    let hasPermission = false;
+    
+    if (userRole === 'admin') {
+      // 管理员可以启用所有线索的跟进
+      hasPermission = true;
+      console.log('权限检查: 管理员用户，允许启用跟进');
+    } else if (userRole === 'service') {
+      // 客服只能启用自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else if (userRole === 'sales') {
+      // 销售只能启用分配给自己的线索
+      hasPermission = leadData.current_follower === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else {
+      // 其他角色默认只能启用自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    }
+    
+    if (!hasPermission) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(403).json({ 
+        success: false, 
+        message: '您没有权限启用该线索的跟进',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    // 检查是否已经启用
+    if (leadData.enable_followup === 1) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '该线索已经启用跟进',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    const dbStartTime = Date.now();
+    
+    // 启用跟进：设置enable_followup=1，同时重置end_followup=0
+    await CustomerLead.update({
+      enable_followup: 1,
+      end_followup: 0,
+      end_followup_reason: null
+    }, { 
+      where: { id },
+      transaction 
+    });
+    
+    // 创建启用跟进的记录
+    const now = new Date();
+    const currentTimeStr = now.getFullYear() + '-' + 
+      String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+      String(now.getDate()).padStart(2, '0') + ' ' + 
+      String(now.getHours()).padStart(2, '0') + ':' + 
+      String(now.getMinutes()).padStart(2, '0') + ':' + 
+      String(now.getSeconds()).padStart(2, '0');
+    
+    const followUpData = {
+      lead_id: id,
+      follow_up_time: currentTimeStr,
+      follow_up_method: '启用跟进',
+      follow_up_content: '启用跟进功能，开始跟进周期',
+      follow_up_result: '已启用',
+      follow_up_person_id: userId
+    };
+    
+    const followUp = await FollowUpRecord.create(followUpData, { transaction });
+    
+    // 提交事务
+    await transaction.commit();
+    
+    const dbEndTime = Date.now();
+    const totalTime = Date.now() - startTime;
+    const dbTime = dbEndTime - dbStartTime;
+    
+    console.log(`启用跟进完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms`);
+    
+    res.json({ 
+      success: true, 
+      message: '跟进功能启用成功',
+      followUpId: followUp.id,
+      performance: {
+        totalTime: `${totalTime}ms`,
+        dbTime: `${dbTime}ms`
+      }
+    });
+  } catch (err) {
+    // 回滚事务（如果事务已创建）
+    if (transaction) {
+      await transaction.rollback();
+    }
+    
+    const totalTime = Date.now() - startTime;
+    console.error(`启用跟进出错 - 总耗时: ${totalTime}ms`, err);
+    
+    res.status(500).json({ 
+      success: false, 
+      message: err.message,
+      performance: {
+        totalTime: `${totalTime}ms`
+      }
+    });
+  }
+};
+
+// 禁用跟进
+exports.disableFollowup = async (req, res) => {
+  const startTime = Date.now();
+  let transaction;
+  
+  try {
+    const id = req.params.id;
+    const data = req.body;
+    
+    // 参数验证
+    if (!id || isNaN(Number(id))) {
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '无效的线索ID',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    // 验证终结跟进原因（必填）
+    if (!data.end_followup_reason || data.end_followup_reason.trim() === '') {
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '终结跟进时必须填写终结原因',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    // 初始化事务
+    transaction = await CustomerLead.sequelize.transaction();
+    
+    const dbStartTime = Date.now();
+    
+    // 权限控制检查
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    console.log(`禁用跟进权限检查 - 角色: ${userRole}, 用户ID: ${userId}, 线索ID: ${id}`);
+    
+    // 先查询线索信息进行权限检查
+    const existingLead = await CustomerLead.findByPk(id, { transaction });
+    if (!existingLead) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(404).json({ 
+        success: false, 
+        message: '未找到该线索',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    const leadData = existingLead.toJSON();
+    let hasPermission = false;
+    
+    if (userRole === 'admin') {
+      // 管理员可以禁用所有线索的跟进
+      hasPermission = true;
+      console.log('权限检查: 管理员用户，允许禁用跟进');
+    } else if (userRole === 'service') {
+      // 客服只能禁用自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else if (userRole === 'sales') {
+      // 销售只能禁用分配给自己的线索
+      hasPermission = leadData.current_follower === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    } else {
+      // 其他角色默认只能禁用自己登记的线索
+      hasPermission = leadData.follow_up_person === userId.toString();
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+    }
+    
+    if (!hasPermission) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(403).json({ 
+        success: false, 
+        message: '您没有权限禁用该线索的跟进',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+    
+    // 1. 更新线索记录 - 设置终结跟进和禁用跟进
+    const updateData = {
+      end_followup: 1,
+      end_followup_reason: data.end_followup_reason,
+      enable_followup: 0,
+      need_followup: 0
+    };
+    
+    const [updated] = await CustomerLead.update(updateData, { 
+      where: { id },
+      transaction 
+    });
+    
+    // 2. 检查是否需要创建跟进记录
+    let followUp = null;
+    const shouldCreateFollowUp = data.create_follow_up === true; // 只有明确设置为true才创建
+    
+    if (shouldCreateFollowUp) {
+      // 验证跟进内容
+      if (!data.follow_up_content || data.follow_up_content.trim() === '') {
+        await transaction.rollback();
+        const totalTime = Date.now() - startTime;
+        return res.status(400).json({
+          success: false,
+          message: '创建跟进记录时，跟进内容不能为空',
+          performance: {
+            totalTime: `${totalTime}ms`
+          }
+        });
+      }
+      
+      // 获取当前时间字符串，格式：yyyy-MM-dd HH:mm:ss
+      const now = new Date();
+      const currentTimeStr = now.getFullYear() + '-' + 
+        String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+        String(now.getDate()).padStart(2, '0') + ' ' + 
+        String(now.getHours()).padStart(2, '0') + ':' + 
+        String(now.getMinutes()).padStart(2, '0') + ':' + 
+        String(now.getSeconds()).padStart(2, '0');
+      
+      const followUpData = {
+        lead_id: id,
+        follow_up_time: data.follow_up_time || currentTimeStr,
+        follow_up_method: data.follow_up_method || '终结跟进',
+        follow_up_content: data.follow_up_content,
+        follow_up_result: data.follow_up_result || '终结跟进',
+        follow_up_person_id: userId
+      };
+      
+      followUp = await FollowUpRecord.create(followUpData, { transaction });
+    } else {
+      // 如果不创建跟进记录，则创建一个默认的终结跟进记录
+      const now = new Date();
+      const currentTimeStr = now.getFullYear() + '-' + 
+        String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+        String(now.getDate()).padStart(2, '0') + ' ' + 
+        String(now.getHours()).padStart(2, '0') + ':' + 
+        String(now.getMinutes()).padStart(2, '0') + ':' + 
+        String(now.getSeconds()).padStart(2, '0');
+      
+      const followUpData = {
+        lead_id: id,
+        follow_up_time: currentTimeStr,
+        follow_up_method: '系统操作',
+        follow_up_content: `终结跟进 - 原因：${data.end_followup_reason}`,
+        follow_up_result: '终结跟进',
+        follow_up_person_id: userId
+      };
+      
+      followUp = await FollowUpRecord.create(followUpData, { transaction });
+    }
+    
+    // 提交事务
+    await transaction.commit();
+    
+    const dbEndTime = Date.now();
+    const totalTime = Date.now() - startTime;
+    const dbTime = dbEndTime - dbStartTime;
+    
+    res.json({
+      success: true,
+      message: '跟进功能禁用成功',
+      updatedLead: updated > 0,
+      followUpId: followUp.id,
+      createdFollowUp: true,
+      performance: {
+        totalTime: `${totalTime}ms`,
+        dbTime: `${dbTime}ms`
+      }
+    });
+    
+  } catch (error) {
+    if (transaction) {
+      await transaction.rollback();
+    }
+    
+    console.error('禁用跟进失败:', error);
+    const totalTime = Date.now() - startTime;
+    
+    res.status(500).json({
+      success: false,
+      message: '禁用跟进失败',
       error: error.message,
       performance: {
         totalTime: `${totalTime}ms`
