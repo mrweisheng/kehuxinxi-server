@@ -39,9 +39,7 @@ app.use(bodyParser.json());
 const userRoutes = require('./routes/userRoutes');
 app.use('/api/users', userRoutes);
 
-// OCR路由（无需鉴权）
-const ocrRoutes = require('./routes/ocrRoutes');
-app.use('/api/ocr', ocrRoutes);
+
 
 // 业务路由（需要鉴权）
 const leadRoutes = require('./routes/leadRoutes');
@@ -50,6 +48,10 @@ app.use('/api/leads', leadRoutes);
 // 鉴权中间件（保护其他业务接口）
 const authMiddleware = require('./middleware/auth');
 app.use(authMiddleware);
+
+// OCR路由（需要鉴权）
+const ocrRoutes = require('./routes/ocrRoutes');
+app.use('/api/ocr', ocrRoutes);
 const followupRoutes = require('./routes/followupRoutes');
 app.use('/api/followups', followupRoutes);
 const logRoutes = require('./routes/logRoutes');

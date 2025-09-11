@@ -104,6 +104,16 @@ const OcrTaskRecord = sequelize.define('OcrTaskRecord', {
     allowNull: true,
     comment: '详细错误信息（JSON格式，包含失败的具体客户和原因）'
   },
+  operator_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '操作人用户ID，关联users表'
+  },
+  operator_nickname: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: '操作人昵称'
+  },
   created_at: {
     type: DataTypes.DATE,
     allowNull: false,
@@ -135,6 +145,12 @@ const OcrTaskRecord = sequelize.define('OcrTaskRecord', {
     },
     {
       fields: ['created_at']
+    },
+    {
+      fields: ['operator_user_id']
+    },
+    {
+      fields: ['operator_nickname']
     }
   ]
 });
