@@ -11,7 +11,7 @@
  Target Server Version : 80043 (8.0.43-0ubuntu0.24.04.1)
  File Encoding         : 65001
 
- Date: 11/09/2025 11:54:34
+ Date: 11/09/2025 16:33:14
 */
 
 SET NAMES utf8mb4;
@@ -41,6 +41,8 @@ CREATE TABLE `customer_leads`  (
   `enable_followup` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否启用跟进（0=不启用，1=启用）',
   `end_followup_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '终结跟进原因',
   `current_follower` int NULL DEFAULT NULL COMMENT '当前跟进人用户ID',
+  `creator_user_id` int NULL DEFAULT NULL COMMENT '登记人用户ID（创建该线索的人）',
+  `assigned_user_id` int NULL DEFAULT NULL COMMENT '分配的跟进人用户ID（负责跟进的销售）',
   PRIMARY KEY (`id`) USING BTREE,
   INDEX `idx_updated_at`(`updated_at` ASC) USING BTREE,
   INDEX `idx_need_followup_lead_time`(`need_followup` ASC, `lead_time` ASC) USING BTREE,
@@ -49,8 +51,10 @@ CREATE TABLE `customer_leads`  (
   INDEX `idx_contact_name`(`contact_name` ASC) USING BTREE,
   INDEX `idx_contact_account`(`contact_account` ASC) USING BTREE,
   INDEX `idx_enable_followup`(`enable_followup` ASC) USING BTREE,
-  INDEX `idx_enable_need_followup`(`enable_followup` ASC, `need_followup` ASC, `end_followup` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 682 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
+  INDEX `idx_enable_need_followup`(`enable_followup` ASC, `need_followup` ASC, `end_followup` ASC) USING BTREE,
+  INDEX `idx_creator_user_id`(`creator_user_id` ASC) USING BTREE,
+  INDEX `idx_assigned_user_id`(`assigned_user_id` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 684 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for follow_up_records
@@ -70,7 +74,7 @@ CREATE TABLE `follow_up_records`  (
   INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
   INDEX `idx_lead_id_follow_up_time`(`lead_id` ASC, `follow_up_time` ASC) USING BTREE,
   CONSTRAINT `follow_up_records_ibfk_1` FOREIGN KEY (`lead_id`) REFERENCES `customer_leads` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 1012 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 1015 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for followup_remind_config
@@ -127,12 +131,16 @@ CREATE TABLE `ocr_task_records`  (
   `error_details` json NULL COMMENT '详细错误信息（JSON格式，包含失败的具体客户和原因）',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  `operator_user_id` int NULL DEFAULT NULL COMMENT '操作人用户ID，关联users表',
+  `operator_nickname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '操作人昵称',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `idx_task_id`(`task_id` ASC) USING BTREE,
   INDEX `idx_task_status`(`task_status` ASC) USING BTREE,
   INDEX `idx_start_time`(`start_time` ASC) USING BTREE,
-  INDEX `idx_created_at`(`created_at` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 34 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = 'OCR任务执行记录表' ROW_FORMAT = DYNAMIC;
+  INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
+  INDEX `idx_ocr_operator_user_id`(`operator_user_id` ASC) USING BTREE,
+  INDEX `idx_ocr_operator_nickname`(`operator_nickname` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 37 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = 'OCR任务执行记录表' ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for operation_logs
@@ -176,6 +184,6 @@ CREATE TABLE `users`  (
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `username`(`username` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 9 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '用户表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 10 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '用户表' ROW_FORMAT = Dynamic;
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -158,7 +158,15 @@ POST /api/leads
 - create_follow_up: 是否创建跟进记录（可选，默认true）
 
 自动填充字段：
-- follow_up_person: 登记人（正常模式：自动填充为当前登录用户ID；批量模式：固定为ID为2的用户，无需前端传递）- 创建该线索的人
+- follow_up_person: 跟进人昵称（自动填充为跟进人的昵称，用于显示，无需前端传递）
+- creator_user_id: 登记人用户ID（自动填充为当前登录用户ID，无需前端传递）- 创建该线索的人的用户ID
+- assigned_user_id: 分配的跟进人用户ID（自动填充为current_follower的值，无需前端传递）- 负责跟进该线索的销售人员ID
+
+字段说明：
+- current_follower: 跟进人用户ID（前端传入，必填）- 负责跟进该线索的销售人员ID
+- follow_up_person: 跟进人昵称（系统自动填充）- 跟进人的显示名称
+- creator_user_id: 登记人用户ID（系统自动填充）- 创建该线索的人的用户ID
+- assigned_user_id: 分配的跟进人用户ID（系统自动填充）- 与current_follower保持一致
 
 成功返回：
 {
@@ -371,8 +379,10 @@ PUT /api/leads/:id
 - follow_up_result: 跟进结果（可选，默认"待跟进"）
 
 禁止编辑字段：
-- follow_up_person: 登记人（自动填充，不允许修改）- 创建该线索的人
-- current_follower: 跟进人（不允许修改）- 保持原有的分配关系，确保销售人员的权限不受影响
+- follow_up_person: 登记人（自动填充，不允许修改）- 创建该线索的人（字符串字段）
+- creator_user_id: 登记人用户ID（自动填充，不允许修改）- 创建该线索的人的用户ID
+- current_follower: 跟进人用户ID（不允许修改）- 保持原有的分配关系，确保销售人员的权限不受影响
+- assigned_user_id: 分配的跟进人用户ID（不允许修改）- 保持原有的分配关系
 
 重要说明：
 - 管理员可以编辑所有线索的基本信息，但不能修改跟进人分配
@@ -397,7 +407,11 @@ DELETE /api/leads/:id
 成功返回：
 {
   "success": true,
-  "message": "线索删除成功"
+  "deletedFollowUps": 3,
+  "performance": {
+    "totalTime": "120ms",
+    "dbTime": "80ms"
+  }
 }
 
 1.7 启用跟进
@@ -1081,15 +1095,29 @@ DELETE /api/lead-sources/accounts/:id
 权限说明
 ============================
 
-admin: 管理员，可以查看和操作所有数据
-sales: 销售，只能查看分配给自己的线索
-service: 客服，只能查看自己登记的线索
+用户角色权限：
+- admin: 管理员，可以查看和操作所有数据
+- sales: 销售，只能查看和操作分配给自己的线索（基于assigned_user_id字段）
+- service: 客服，只能查看和操作自己登记的线索（基于creator_user_id字段）
+- 其他角色：默认只能查看和操作自己登记的线索（基于creator_user_id字段）
+
+权限控制字段：
+- creator_user_id: 登记人用户ID，用于客服和其他角色的权限控制
+- assigned_user_id: 分配的跟进人用户ID，用于销售角色的权限控制
+- current_follower: 当前跟进人用户ID，与assigned_user_id保持一致
 
 重要权限保护机制：
 - 线索的跟进人分配（current_follower）一旦确定，任何用户（包括管理员）都不能通过编辑线索来修改
 - 这确保了销售人员的权限不会因为管理员的操作而丢失
 - 管理员可以为任何线索创建跟进记录，但不会影响原有的跟进人分配
 - 只有通过专门的重新分配功能才能更改线索的跟进人
+
+API权限控制：
+- 查看线索列表/详情：根据用户角色过滤数据
+- 编辑线索：根据用户角色检查权限
+- 删除线索：根据用户角色检查权限
+- 启用/禁用跟进：根据用户角色检查权限
+- 导出线索：根据用户角色过滤导出数据
 
 ============================
 8. OCR图片识别与批量导入
@@ -1098,8 +1126,19 @@ service: 客服，只能查看自己登记的线索
 8.1 OCR图片识别（异步模式）
 POST /api/ocr/recognize
 请求类型：multipart/form-data
+
+权限要求：
+- 只允许 admin、service、sales 三个角色使用OCR功能
+- 其他角色将返回403权限错误
+
 参数：
 - image: 图片文件（支持jpg、jpeg、png、gif格式，最大10MB）
+- assigned_user_id: 跟进人用户ID（可选，根据用户角色决定是否必填）
+
+参数说明：
+- 销售角色（sales）：assigned_user_id 可选，如不传则自动使用当前销售用户ID作为跟进人
+- 客服角色（service）：assigned_user_id 必填，必须指定跟进人
+- 管理员角色（admin）：assigned_user_id 必填，必须指定跟进人
 
 成功返回：
 {
@@ -1108,6 +1147,24 @@ POST /api/ocr/recognize
   "message": "图片已提交处理，请使用任务ID查询处理状态",
   "performance": {
     "totalTime": "15ms"
+  }
+}
+
+错误返回（权限不足）：
+{
+  "success": false,
+  "error": "您没有权限使用OCR功能",
+  "performance": {
+    "totalTime": "10ms"
+  }
+}
+
+错误返回（参数错误）：
+{
+  "success": false,
+  "error": "客服使用OCR时必须指定跟进人",
+  "performance": {
+    "totalTime": "12ms"
   }
 }
 
@@ -1137,8 +1194,10 @@ POST /api/ocr/recognize
 - 意向等级：低
 - 来源平台：视频号
 - 来源账号：明哥揀粤港车
-- 跟进人：用户ID为1的用户
-- 登记人：用户ID为2的用户（批量模式）
+- 跟进人：根据用户角色动态设置
+  - 销售角色：当前销售用户ID
+  - 客服/管理员：传入的assigned_user_id参数
+- 登记人：当前登录用户ID（所有角色）
 
 8.2 查询OCR任务状态
 GET /api/ocr/status/:taskId

@@ -82,32 +82,26 @@ exports.createLead = async (req, res) => {
     const isBatchMode = req.headers['x-batch-mode'] === 'true';
     let registrantId;
     
+    console.log('线索录入请求详情:', {
+      isBatchMode: isBatchMode,
+      userRole: req.user.role,
+      userId: req.user.id,
+      current_follower: data.current_follower,
+      headers: req.headers
+    });
+    
     if (isBatchMode) {
-      // 批量登记模式：登记人固定为ID为2的用户
-      registrantId = 2;
-      console.log('批量登记模式：登记人ID设置为', registrantId);
+      // 批量登记模式：登记人为当前登录用户（OCR等批量操作）
+      registrantId = req.user.id;
+      console.log('批量登记模式：登记人ID设置为当前用户', registrantId);
       
-      // 安全检查：验证ID为2的用户是否存在
-      try {
-        const User = require('../models/user');
-        const batchUser = await User.findByPk(2);
-        if (!batchUser) {
-          await transaction.rollback();
-          const totalTime = Date.now() - startTime;
-          return res.status(400).json({
-            success: false,
-            message: '批量登记模式配置错误：ID为2的用户不存在',
-            performance: {
-              totalTime: `${totalTime}ms`
-            }
-          });
-        }
-      } catch (error) {
+      // 角色权限检查（批量模式也需要权限验证）
+      if (!req.user || !['admin', 'sales', 'service'].includes(req.user.role)) {
         await transaction.rollback();
         const totalTime = Date.now() - startTime;
-        return res.status(500).json({
+        return res.status(403).json({
           success: false,
-          message: '批量登记模式验证失败',
+          message: '您没有权限进行批量录入',
           performance: {
             totalTime: `${totalTime}ms`
           }
@@ -117,10 +111,59 @@ exports.createLead = async (req, res) => {
       // 正常模式：登记人为当前登录用户
       registrantId = req.user.id;
       console.log('正常模式：登记人ID设置为', registrantId);
+      
+      // 新增：角色权限检查
+      if (!req.user || !['admin', 'sales', 'service'].includes(req.user.role)) {
+        await transaction.rollback();
+        const totalTime = Date.now() - startTime;
+        return res.status(403).json({
+          success: false,
+          message: '您没有权限录入线索',
+          performance: {
+            totalTime: `${totalTime}ms`
+          }
+        });
+      }
+      
+      // 新增：销售角色特殊处理
+      if (req.user.role === 'sales') {
+        // 销售角色：强制将跟进人设置为自己，忽略前端传入的值
+        data.current_follower = parseInt(req.user.id);
+        console.log(`销售角色录入，跟进人强制设置为自己: ${req.user.id}`);
+      }
     }
     
-    // 先自动填充登记人
-    data.follow_up_person = registrantId;
+    // 先自动填充登记人和分配的跟进人
+    data.creator_user_id = parseInt(registrantId);
+    data.assigned_user_id = parseInt(data.current_follower); // 确保类型转换为整数
+    
+    // 自动填充follow_up_person字段（跟进人昵称，用于显示）
+    if (!data.follow_up_person) {
+      // 获取跟进人的昵称（跟进人ID = current_follower）
+      try {
+        const User = require('../models/user');
+        const followerUserId = data.current_follower;
+        const followerUser = await User.findByPk(followerUserId, { 
+          attributes: ['nickname', 'username'],
+          transaction 
+        });
+        if (followerUser) {
+          data.follow_up_person = followerUser.nickname || followerUser.username || `用户${followerUserId}`;
+        } else {
+          data.follow_up_person = `用户${followerUserId}`;
+        }
+      } catch (error) {
+        console.error('获取跟进人信息失败:', error);
+        data.follow_up_person = `用户${data.current_follower}`;
+      }
+    }
+    
+    console.log('字段自动填充结果:', {
+      creator_user_id: data.creator_user_id,
+      assigned_user_id: data.assigned_user_id,
+      current_follower: data.current_follower,
+      follow_up_person: data.follow_up_person
+    });
     // 参数校验
     const validation = validateLeadData(data);
     if (!validation.valid) {
@@ -141,6 +184,9 @@ exports.createLead = async (req, res) => {
       const totalTime = Date.now() - startTime;
       return res.status(400).json({ success: false, message: 'current_follower（跟进人用户ID）必填且必须为有效用户ID' });
     }
+    
+    // 确保 current_follower 是数字类型
+    data.current_follower = parseInt(data.current_follower);
 
     // 处理 deal_date 字段
     if (data.deal_date === '') {
@@ -197,8 +243,14 @@ exports.createLead = async (req, res) => {
         follow_up_method: '首次联系', // 默认跟进方式
         follow_up_content: data.follow_up_content, // 用户必须提供的跟进内容
         follow_up_result: '待跟进', // 默认跟进结果
-        follow_up_person_id: data.follow_up_person
+        follow_up_person_id: data.current_follower // 使用跟进人用户ID，不是昵称
       };
+      
+      console.log('创建跟进记录数据:', {
+        followUpData: followUpData,
+        current_follower: data.current_follower,
+        follow_up_person: data.follow_up_person
+      });
       
       followUp = await FollowUpRecord.create(followUpData, { transaction });
     }
@@ -343,18 +395,18 @@ exports.getLeads = async (req, res) => {
     
     if (userRole === 'service') {
       // 客服只能查看自己登记的线索
-      where.follow_up_person = userId.toString();
+      where.creator_user_id = userId;
       console.log('权限控制: 客服用户，只能查看自己登记的线索');
     } else if (userRole === 'sales') {
       // 销售只能查看分配给自己的线索
-      where.current_follower = userId;
+      where.assigned_user_id = userId;
       console.log('权限控制: 销售用户，只能查看分配给自己的线索');
     } else if (userRole === 'admin') {
       // 管理员可以查看所有线索
       console.log('权限控制: 管理员用户，可以查看所有线索');
     } else {
       // 其他角色默认只能查看自己登记的线索
-      where.follow_up_person = userId.toString();
+      where.creator_user_id = userId;
       console.log('权限控制: 其他角色用户，只能查看自己登记的线索');
     }
     
@@ -381,6 +433,16 @@ exports.getLeads = async (req, res) => {
         {
           model: User,
           as: 'currentFollowerUser',
+          attributes: ['id', 'nickname', 'username']
+        },
+        {
+          model: User,
+          as: 'creatorUser',
+          attributes: ['id', 'nickname', 'username']
+        },
+        {
+          model: User,
+          as: 'assignedUser',
           attributes: ['id', 'nickname', 'username']
         }
       ],
@@ -588,16 +650,16 @@ exports.getLeadDetail = async (req, res) => {
       console.log('权限检查: 管理员用户，允许访问');
     } else if (userRole === 'service') {
       // 客服只能查看自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 客服用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else if (userRole === 'sales') {
       // 销售只能查看分配给自己的线索
-      hasPermission = leadData.current_follower === userId;
-      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.assigned_user_id === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.assigned_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else {
       // 其他角色默认只能查看自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     }
     
     if (!hasPermission) {
@@ -731,16 +793,16 @@ exports.updateLead = async (req, res) => {
       console.log('权限检查: 管理员用户，允许编辑');
     } else if (userRole === 'service') {
       // 客服只能编辑自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 客服用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else if (userRole === 'sales') {
       // 销售只能编辑分配给自己的线索
-      hasPermission = leadData.current_follower === userId;
-      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.assigned_user_id === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.assigned_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else {
       // 其他角色默认只能编辑自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     }
     
     if (!hasPermission) {
@@ -933,16 +995,16 @@ exports.deleteLead = async (req, res) => {
       console.log('权限检查: 管理员用户，允许删除');
     } else if (userRole === 'service') {
       // 客服只能删除自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 客服用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else if (userRole === 'sales') {
       // 销售只能删除分配给自己的线索
-      hasPermission = leadData.current_follower === userId;
-      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.assigned_user_id === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.assigned_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else {
       // 其他角色默认只能删除自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     }
     
     if (!hasPermission) {
@@ -1116,18 +1178,18 @@ exports.exportLeads = async (req, res) => {
     
     if (userRole === 'service') {
       // 客服只能导出自己登记的线索
-      where.follow_up_person = userId.toString();
+      where.creator_user_id = userId;
       console.log('权限控制: 客服用户，只能导出自己登记的线索');
     } else if (userRole === 'sales') {
       // 销售只能导出分配给自己的线索
-      where.current_follower = userId;
+      where.assigned_user_id = userId;
       console.log('权限控制: 销售用户，只能导出分配给自己的线索');
     } else if (userRole === 'admin') {
       // 管理员可以导出所有线索
       console.log('权限控制: 管理员用户，可以导出所有线索');
     } else {
       // 其他角色默认只能导出自己登记的线索
-      where.follow_up_person = userId.toString();
+      where.creator_user_id = userId;
       console.log('权限控制: 其他角色用户，只能导出自己登记的线索');
     }
     
@@ -1141,6 +1203,16 @@ exports.exportLeads = async (req, res) => {
         {
           model: User,
           as: 'currentFollowerUser',
+          attributes: ['id', 'nickname', 'username']
+        },
+        {
+          model: User,
+          as: 'creatorUser',
+          attributes: ['id', 'nickname', 'username']
+        },
+        {
+          model: User,
+          as: 'assignedUser',
           attributes: ['id', 'nickname', 'username']
         }
       ],
@@ -1325,16 +1397,16 @@ exports.enableFollowup = async (req, res) => {
       console.log('权限检查: 管理员用户，允许启用跟进');
     } else if (userRole === 'service') {
       // 客服只能启用自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 客服用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else if (userRole === 'sales') {
       // 销售只能启用分配给自己的线索
-      hasPermission = leadData.current_follower === userId;
-      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.assigned_user_id === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.assigned_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else {
       // 其他角色默认只能启用自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     }
     
     if (!hasPermission) {
@@ -1498,16 +1570,16 @@ exports.disableFollowup = async (req, res) => {
       console.log('权限检查: 管理员用户，允许禁用跟进');
     } else if (userRole === 'service') {
       // 客服只能禁用自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 客服用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 客服用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else if (userRole === 'sales') {
       // 销售只能禁用分配给自己的线索
-      hasPermission = leadData.current_follower === userId;
-      console.log(`权限检查: 销售用户，跟进人: ${leadData.current_follower}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.assigned_user_id === userId;
+      console.log(`权限检查: 销售用户，跟进人: ${leadData.assigned_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     } else {
       // 其他角色默认只能禁用自己登记的线索
-      hasPermission = leadData.follow_up_person === userId.toString();
-      console.log(`权限检查: 其他角色用户，登记人: ${leadData.follow_up_person}, 当前用户: ${userId}, 权限: ${hasPermission}`);
+      hasPermission = leadData.creator_user_id === userId;
+      console.log(`权限检查: 其他角色用户，登记人: ${leadData.creator_user_id}, 当前用户: ${userId}, 权限: ${hasPermission}`);
     }
     
     if (!hasPermission) {

@@ -89,6 +89,18 @@ const CustomerLead = sequelize.define('customer_leads', {
     allowNull: true,
     comment: '当前跟进人用户ID'
   },
+  // 新增字段：登记人用户ID
+  creator_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '登记人用户ID（创建该线索的人）'
+  },
+  // 新增字段：分配的跟进人用户ID
+  assigned_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '分配的跟进人用户ID（负责跟进的销售）'
+  },
   // 新增字段：是否启用跟进
   enable_followup: {
     type: DataTypes.TINYINT,
@@ -116,17 +128,7 @@ const CustomerLead = sequelize.define('customer_leads', {
   comment: '客资主表（线索表）'
 });
 
-// 定义关联关系
-CustomerLead.associate = (models) => {
-  CustomerLead.hasMany(models.FollowUpRecord, {
-    foreignKey: 'lead_id',
-    as: 'followUps'
-  });
-  // 新增：当前跟进人用户信息关联
-  CustomerLead.belongsTo(models.User, {
-    foreignKey: 'current_follower',
-    as: 'currentFollowerUser'
-  });
-};
+// 关联关系在 config/associations.js 中统一管理
+// 这里不再定义关联关系，避免重复定义
 
 module.exports = CustomerLead;

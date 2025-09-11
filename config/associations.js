@@ -53,10 +53,39 @@ function initializeAssociations() {
     onUpdate: 'CASCADE'
   });
 
-  // CustomerLead 和 User 的当前跟进人关联
+  // CustomerLead 和 User 的关联关系
+  // 当前跟进人关联
   CustomerLead.belongsTo(User, {
     foreignKey: 'current_follower',
     as: 'currentFollowerUser'
+  });
+
+  // 登记人关联
+  CustomerLead.belongsTo(User, {
+    foreignKey: 'creator_user_id',
+    as: 'creatorUser'
+  });
+
+  // 分配的跟进人关联
+  CustomerLead.belongsTo(User, {
+    foreignKey: 'assigned_user_id',
+    as: 'assignedUser'
+  });
+
+  // User 的反向关联
+  User.hasMany(CustomerLead, {
+    foreignKey: 'current_follower',
+    as: 'currentFollowerLeads'
+  });
+
+  User.hasMany(CustomerLead, {
+    foreignKey: 'creator_user_id',
+    as: 'createdLeads'
+  });
+
+  User.hasMany(CustomerLead, {
+    foreignKey: 'assigned_user_id',
+    as: 'assignedLeads'
   });
 
   console.log('模型关联关系初始化完成');

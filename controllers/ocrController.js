@@ -15,7 +15,7 @@ const generateTaskId = () => {
 };
 
 // 创建OCR任务记录
-const createTaskRecord = async (taskId, fileInfo, startTime) => {
+const createTaskRecord = async (taskId, fileInfo, startTime, userInfo = null) => {
   try {
     await OcrTaskRecord.create({
       task_id: taskId,
@@ -23,9 +23,10 @@ const createTaskRecord = async (taskId, fileInfo, startTime) => {
       file_size: fileInfo.size,
       file_type: fileInfo.mimetype,
       task_status: 'pending',
-      start_time: new Date(startTime)
+      start_time: new Date(startTime),
+      operator_user_id: userInfo ? userInfo.id : null,
+      operator_nickname: userInfo ? (userInfo.nickname || userInfo.username) : null
     });
-    console.log(`[OCR-${taskId}] 数据库记录已创建`);
   } catch (error) {
     console.error(`[OCR-${taskId}] 创建数据库记录失败:`, error);
   }
@@ -37,7 +38,6 @@ const updateTaskRecord = async (taskId, updateData) => {
     await OcrTaskRecord.update(updateData, {
       where: { task_id: taskId }
     });
-    console.log(`[OCR-${taskId}] 数据库记录已更新:`, Object.keys(updateData));
   } catch (error) {
     console.error(`[OCR-${taskId}] 更新数据库记录失败:`, error);
   }
@@ -226,7 +226,7 @@ const formatLeadTime = (mmdd) => {
 };
 
 // 批量注册线索
-const batchRegisterLeads = async (taskId, customers) => {
+const batchRegisterLeads = async (taskId, customers, userInfo = null, assignedUserId = null) => {
   const results = {
     total: customers.length,
     success: 0,
@@ -235,7 +235,6 @@ const batchRegisterLeads = async (taskId, customers) => {
     errors: []
   };
   
-  console.log(`[OCR-${taskId}] 开始批量注册线索，共 ${customers.length} 个客户`);
   
   for (let i = 0; i < customers.length; i++) {
     const customer = customers[i];
@@ -266,13 +265,15 @@ const batchRegisterLeads = async (taskId, customers) => {
         intention_level: '低',  // 修改为：低意向
         is_deal: 0,
         follow_up_content: '首次联系',
-        current_follower: 1
+        current_follower: assignedUserId // 使用传入的跟进人ID
       };
+      
       
       // 构造模拟的req和res对象
       const mockReq = {
         body: leadData,
-        headers: { 'x-batch-mode': 'true' }
+        headers: { 'x-batch-mode': 'true' },
+        user: userInfo // 传递用户信息
       };
       
       let responseData = null;
@@ -300,10 +301,8 @@ const batchRegisterLeads = async (taskId, customers) => {
       if (responseData && responseData.success) {
         if (responseData.duplicate) {
           results.duplicated++;
-          console.log(`[OCR-${taskId}] 线索重复: ${customerName}`);
         } else {
           results.success++;
-          console.log(`[OCR-${taskId}] 线索注册成功: ${customerName}`);
         }
       } else {
         throw new Error(responseData?.message || '注册失败');
@@ -313,20 +312,17 @@ const batchRegisterLeads = async (taskId, customers) => {
       results.failed++;
       const errorMsg = `客户 ${customerName}: ${error.message}`;
       results.errors.push(errorMsg);
-      console.error(`[OCR-${taskId}] 线索注册失败: ${errorMsg}`);
     }
   }
   
-  console.log(`[OCR-${taskId}] 批量注册完成，成功: ${results.success}，失败: ${results.failed}，重复: ${results.duplicated}`);
   return results;
 };
 
 // 异步OCR处理函数
-const processOCRAsync = async (taskId, filePath, originalName) => {
+const processOCRAsync = async (taskId, filePath, originalName, userInfo, assignedUserId) => {
   const taskStartTime = Date.now();
   
   try {
-    console.log(`[OCR-${taskId}] 开始异步处理图片: ${originalName}`);
     
     // 更新任务状态为处理中
     ocrTasks.set(taskId, {
@@ -358,7 +354,6 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
     const base64Image = imageToBase64(filePath);
     const base64ConvertTime = Date.now() - base64ConvertStart;
     
-    console.log(`[OCR-${taskId}] 图片转换完成，耗时: ${base64ConvertTime}ms`);
     
     // 更新任务状态
     ocrTasks.set(taskId, {
@@ -390,7 +385,6 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
     });
     const apiCallTime = Date.now() - apiCallStart;
     
-    console.log(`[OCR-${taskId}] AI识别完成，耗时: ${apiCallTime}ms`);
 
     // 处理并返回结果
     if (response.choices && response.choices.length > 0) {
@@ -409,10 +403,9 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
         }).filter(item => item.customer_name); // 过滤掉空值
         
         const totalTime = Date.now() - taskStartTime;
-        console.log(`[OCR-${taskId}] 处理完成，总耗时: ${totalTime}ms，识别到 ${customers.length} 个联系人`);
         
         // 批量注册线索
-        const leadRegistrationResult = await batchRegisterLeads(taskId, customers);
+        const leadRegistrationResult = await batchRegisterLeads(taskId, customers, userInfo, assignedUserId);
         
         // 提取第一个客户的lead_time用于记录
         let extractedLeadTime = null;
@@ -424,10 +417,14 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
           }
         }
         
-        // 更新任务状态为完成
+        // 根据线索入库结果判断任务状态 - 只有入库成功才算成功
         const endTime = Date.now();
+        const taskStatus = (leadRegistrationResult.success > 0) ? 'completed' : 'failed';
+        const taskStatusText = (leadRegistrationResult.success > 0) ? '完成' : '失败';
+        
+        
         ocrTasks.set(taskId, {
-          status: 'completed',
+          status: taskStatus,
           startTime: taskStartTime,
           endTime: endTime,
           fileName: originalName,
@@ -442,7 +439,7 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
         
         // 更新数据库记录
         await updateTaskRecord(taskId, {
-          task_status: 'completed',
+          task_status: taskStatus,
           end_time: new Date(endTime),
           total_time_ms: totalTime,
           api_call_time_ms: apiCallTime,
@@ -456,16 +453,16 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
         });
         
       } catch (error) {
-        console.error(`[OCR-${taskId}] 结果解析错误:`, error);
-        // 降级返回原始字符串
+        // 降级返回原始字符串（解析失败，没有成功入库，状态应为失败）
         const totalTime = Date.now() - taskStartTime;
         const endTime = Date.now();
         ocrTasks.set(taskId, {
-          status: 'completed',
+          status: 'failed',
           startTime: taskStartTime,
           endTime: endTime,
           fileName: originalName,
           result: rawResult,
+          error: `结果解析失败: ${error.message}`,
           performance: {
             totalTime: `${totalTime}ms`,
             base64ConvertTime: `${base64ConvertTime}ms`,
@@ -473,9 +470,9 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
           }
         });
         
-        // 更新数据库记录（解析失败但OCR成功）
+        // 更新数据库记录（解析失败，没有成功入库，状态应为失败）
         await updateTaskRecord(taskId, {
-          task_status: 'completed',
+          task_status: 'failed',
           end_time: new Date(endTime),
           total_time_ms: totalTime,
           api_call_time_ms: apiCallTime,
@@ -495,7 +492,6 @@ const processOCRAsync = async (taskId, filePath, originalName) => {
     }
   } catch (error) {
     const totalTime = Date.now() - taskStartTime;
-    console.error(`[OCR-${taskId}] 处理失败，总耗时: ${totalTime}ms`, error);
     
     // 清理可能残留的临时文件
     if (filePath) {
@@ -542,7 +538,6 @@ exports.recognizeImage = async (req, res) => {
     // 检查是否有文件上传
     if (!req.file) {
       const totalTime = Date.now() - startTime;
-      console.log(`[OCR] 请求失败: 未上传文件，耗时: ${totalTime}ms`);
       return res.status(400).json({ 
         success: false,
         error: '请上传图片文件',
@@ -551,6 +546,42 @@ exports.recognizeImage = async (req, res) => {
         }
       });
     }
+
+    // 角色权限验证：只允许 admin、service、sales 三个角色使用OCR
+    const allowedRoles = ['admin', 'service', 'sales'];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      const totalTime = Date.now() - startTime;
+      return res.status(403).json({ 
+        success: false,
+        error: '您没有权限使用OCR功能',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+
+    // 打印OCR调用时的入参信息
+
+    // 根据角色处理assigned_user_id参数
+    let assignedUserId = null;
+    if (req.user.role === 'sales') {
+      // 销售角色：使用当前用户ID作为跟进人
+      assignedUserId = req.user.id;
+    } else if (req.user.role === 'admin' || req.user.role === 'service') {
+      // 客服和管理员：必须传入assigned_user_id参数
+      if (!req.body.assigned_user_id) {
+        const totalTime = Date.now() - startTime;
+        return res.status(400).json({ 
+          success: false,
+          error: `${req.user.role === 'admin' ? '管理员' : '客服'}使用OCR时必须指定跟进人`,
+          performance: {
+            totalTime: `${totalTime}ms`
+          }
+        });
+      }
+      assignedUserId = parseInt(req.body.assigned_user_id);
+    }
+    
 
     // 生成任务ID
     const taskId = generateTaskId();
@@ -561,12 +592,6 @@ exports.recognizeImage = async (req, res) => {
       path: req.file.path
     };
     
-    console.log(`[OCR] 收到图片识别请求，任务ID: ${taskId}`);
-    console.log(`[OCR-${taskId}] 文件信息:`, {
-      name: fileInfo.originalName,
-      size: `${(fileInfo.size / 1024).toFixed(2)}KB`,
-      type: fileInfo.mimetype
-    });
 
     // 初始化任务状态
     ocrTasks.set(taskId, {
@@ -578,13 +603,19 @@ exports.recognizeImage = async (req, res) => {
     });
 
     // 创建数据库记录
-    await createTaskRecord(taskId, fileInfo, startTime);
+    await createTaskRecord(taskId, fileInfo, startTime, {
+      id: req.user.id,
+      username: req.user.username,
+      nickname: req.user.nickname
+    });
 
     // 异步处理OCR
-    processOCRAsync(taskId, fileInfo.path, fileInfo.originalName);
+    processOCRAsync(taskId, fileInfo.path, fileInfo.originalName, { 
+      id: req.user.id, 
+      role: req.user.role 
+    }, assignedUserId);
     
     const totalTime = Date.now() - startTime;
-    console.log(`[OCR-${taskId}] 任务已提交，耗时: ${totalTime}ms`);
 
     // 立即返回任务ID
     res.json({
@@ -602,7 +633,6 @@ exports.recognizeImage = async (req, res) => {
     
   } catch (error) {
     const totalTime = Date.now() - startTime;
-    console.error(`[OCR] 提交任务失败，耗时: ${totalTime}ms`, error);
     
     // 清理可能残留的临时文件
     if (req.file && req.file.path) {
@@ -626,7 +656,6 @@ exports.getTaskStatus = async (req, res) => {
   const { taskId } = req.params;
   
   try {
-    console.log(`[OCR] 查询任务状态: ${taskId}`);
     
     if (!taskId) {
       const totalTime = Date.now() - startTime;
@@ -644,7 +673,6 @@ exports.getTaskStatus = async (req, res) => {
     
     // 如果内存中没有，则查询数据库
     if (!task) {
-      console.log(`[OCR] 内存中未找到任务，查询数据库: ${taskId}`);
       
       try {
         const dbRecord = await OcrTaskRecord.findOne({
@@ -652,7 +680,6 @@ exports.getTaskStatus = async (req, res) => {
         });
         
         if (dbRecord) {
-          console.log(`[OCR] 数据库中找到任务记录: ${taskId}，状态: ${dbRecord.task_status}`);
           
           // 构造任务对象
           task = {
@@ -684,7 +711,6 @@ exports.getTaskStatus = async (req, res) => {
           
         } else {
           const totalTime = Date.now() - startTime;
-          console.log(`[OCR] 数据库中未找到任务: ${taskId}，耗时: ${totalTime}ms`);
           return res.status(404).json({
             success: false,
             error: '任务不存在或已过期',
@@ -694,7 +720,6 @@ exports.getTaskStatus = async (req, res) => {
           });
         }
       } catch (dbError) {
-        console.error(`[OCR] 查询数据库失败: ${taskId}`, dbError);
         const totalTime = Date.now() - startTime;
         return res.status(500).json({
           success: false,
@@ -707,7 +732,6 @@ exports.getTaskStatus = async (req, res) => {
     }
 
     const totalTime = Date.now() - startTime;
-    console.log(`[OCR] 任务状态查询完成: ${taskId}，状态: ${task.status}，耗时: ${totalTime}ms`);
 
     res.json({
       success: true,
@@ -727,7 +751,6 @@ exports.getTaskStatus = async (req, res) => {
     
   } catch (error) {
     const totalTime = Date.now() - startTime;
-    console.error(`[OCR] 查询任务状态失败: ${taskId}，耗时: ${totalTime}ms`, error);
     
     res.status(500).json({
       success: false,
@@ -773,12 +796,21 @@ exports.getTaskRecords = async (req, res) => {
     });
     
     const totalTime = Date.now() - startTime;
-    console.log(`[OCR] 查询任务记录完成，返回 ${result.rows.length} 条记录，耗时: ${totalTime}ms`);
     
     res.json({
       success: true,
       data: {
-        records: result.rows.map(record => record.toJSON()),
+        records: result.rows.map(record => {
+          const recordData = record.toJSON();
+          // 确保操作人信息正确显示
+          return {
+            ...recordData,
+            operator_info: {
+              user_id: recordData.operator_user_id,
+              nickname: recordData.operator_nickname
+            }
+          };
+        }),
         pagination: {
           total: result.count,
           page: parseInt(page),
@@ -793,7 +825,6 @@ exports.getTaskRecords = async (req, res) => {
     
   } catch (error) {
     const totalTime = Date.now() - startTime;
-    console.error(`[OCR] 查询任务记录失败，耗时: ${totalTime}ms`, error);
     
     res.status(500).json({
       success: false,
