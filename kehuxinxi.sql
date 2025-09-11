@@ -11,7 +11,7 @@
  Target Server Version : 80043 (8.0.43-0ubuntu0.24.04.1)
  File Encoding         : 65001
 
- Date: 08/09/2025 15:55:39
+ Date: 11/09/2025 11:54:34
 */
 
 SET NAMES utf8mb4;
@@ -38,6 +38,7 @@ CREATE TABLE `customer_leads`  (
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   `need_followup` tinyint(1) NOT NULL DEFAULT 0 COMMENT '当前周期是否需要跟进（1=是，0=否）',
   `end_followup` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否终结跟进（1=终结，0=未终结）',
+  `enable_followup` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否启用跟进（0=不启用，1=启用）',
   `end_followup_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '终结跟进原因',
   `current_follower` int NULL DEFAULT NULL COMMENT '当前跟进人用户ID',
   PRIMARY KEY (`id`) USING BTREE,
@@ -46,8 +47,10 @@ CREATE TABLE `customer_leads`  (
   INDEX `idx_follow_up_person`(`follow_up_person` ASC) USING BTREE,
   INDEX `idx_current_follower`(`current_follower` ASC) USING BTREE,
   INDEX `idx_contact_name`(`contact_name` ASC) USING BTREE,
-  INDEX `idx_contact_account`(`contact_account` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 624 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
+  INDEX `idx_contact_account`(`contact_account` ASC) USING BTREE,
+  INDEX `idx_enable_followup`(`enable_followup` ASC) USING BTREE,
+  INDEX `idx_enable_need_followup`(`enable_followup` ASC, `need_followup` ASC, `end_followup` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 682 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客资主表（线索表）' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for follow_up_records
@@ -67,7 +70,7 @@ CREATE TABLE `follow_up_records`  (
   INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
   INDEX `idx_lead_id_follow_up_time`(`lead_id` ASC, `follow_up_time` ASC) USING BTREE,
   CONSTRAINT `follow_up_records_ibfk_1` FOREIGN KEY (`lead_id`) REFERENCES `customer_leads` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 948 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 1012 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '跟进记录表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for followup_remind_config
@@ -129,7 +132,7 @@ CREATE TABLE `ocr_task_records`  (
   INDEX `idx_task_status`(`task_status` ASC) USING BTREE,
   INDEX `idx_start_time`(`start_time` ASC) USING BTREE,
   INDEX `idx_created_at`(`created_at` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 24 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = 'OCR任务执行记录表' ROW_FORMAT = DYNAMIC;
+) ENGINE = InnoDB AUTO_INCREMENT = 34 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = 'OCR任务执行记录表' ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for operation_logs
