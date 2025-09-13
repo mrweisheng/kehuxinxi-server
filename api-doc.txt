@@ -1275,6 +1275,10 @@ GET /api/ocr/status/:taskId
 
 8.3 查询OCR任务记录历史
 GET /api/ocr/records
+权限要求：
+- 管理员(admin): 可以查看所有用户的OCR记录
+- 其他角色(sales, service等): 只能查看自己创建的OCR记录
+
 查询参数：
 - page: 页码（默认1）
 - limit: 每页数量（默认10，最大100）

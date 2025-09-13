@@ -88,6 +88,21 @@ function initializeAssociations() {
     as: 'assignedLeads'
   });
 
+  // OCR任务记录和用户的关联关系
+  OcrTaskRecord.belongsTo(User, {
+    foreignKey: 'operator_user_id',
+    as: 'operator',
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
+  });
+
+  User.hasMany(OcrTaskRecord, {
+    foreignKey: 'operator_user_id',
+    as: 'ocrTasks',
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
+  });
+
   console.log('模型关联关系初始化完成');
 }
 
