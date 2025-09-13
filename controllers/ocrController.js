@@ -338,16 +338,20 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
     });
 
     // 使用固定的文本转录提示词，输出JSON格式
-    const prompt = `你的任务是进行一次 绝对精确 的文本转录，并输出为JSON格式。
- 唯一规则：  必须逐字、逐符号、逐空格地 100%复制 图片中的联系人备注。严禁进行任何形式的自动格式化、美化或空格调整。
- 严重警告：  我注意到你可能会在斜杠 / 前后错误地添加空格。这是 绝对不允许 的。
- 正确示例 (必须遵循)：  0824/俊
- 错误示例 (必须避免)：  0824 / 俊
- 你的输出必须和"正确示例"的格式完全一致，斜杠紧贴两边的文字。
- 输出格式要求：请将识别到的每个联系人名称输出为JSON格式，每行一个对象，格式如下：
- {"customer_name": "0824/俊"}
- {"customer_name": "0824/刘汉彬"}
- 现在，请处理图片，将所有联系人按上述JSON格式逐行输出。`;
+    const prompt = `请精确识别图片中的联系人信息，并输出为JSON格式。
+
+重要要求：
+1. 逐字复制图片中的文字，不要改变任何字符
+2. 保持原有的空格，不要随意添加或删除空格
+3. 所有括号统一使用中文括号（），不要使用英文括号()
+4. 不要在斜杠/前后添加空格
+5. 保持繁简体字符不变
+
+输出格式：
+{"customer_name": "0824/俊"}
+{"customer_name": "0911/Ada（資質齊全2.8W辦理蓮塘）"}
+
+现在请识别图片中的联系人信息。`;
 
     // 将图片转换为base64
     const base64ConvertStart = Date.now();
@@ -602,8 +606,17 @@ exports.recognizeImage = async (req, res) => {
       progress: '任务已创建，等待处理...'
     });
 
-    // 创建数据库记录
-    await createTaskRecord(taskId, fileInfo, startTime, {
+    // 创建数据库记录 - 从数据库获取最新的用户信息
+    const User = require('../models/user');
+    const currentUser = await User.findByPk(req.user.id, {
+      attributes: ['id', 'username', 'nickname']
+    });
+    
+    await createTaskRecord(taskId, fileInfo, startTime, currentUser ? {
+      id: currentUser.id,
+      username: currentUser.username,
+      nickname: currentUser.nickname
+    } : {
       id: req.user.id,
       username: req.user.username,
       nickname: req.user.nickname
@@ -772,6 +785,12 @@ exports.getTaskRecords = async (req, res) => {
     // 构建查询条件
     const whereConditions = {};
     
+    // 权限控制：管理员可以查看所有记录，其他角色只能查看自己的
+    const { role, id: userId } = req.user;
+    if (role !== 'admin') {
+      whereConditions.operator_user_id = userId;
+    }
+    
     if (status) {
       whereConditions.task_status = status;
     }
@@ -786,13 +805,20 @@ exports.getTaskRecords = async (req, res) => {
       }
     }
     
-    // 分页查询
+    // 分页查询 - 关联查询用户信息
+    const User = require('../models/user');
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const result = await OcrTaskRecord.findAndCountAll({
       where: whereConditions,
       order: [['created_at', 'DESC']],
       limit: parseInt(limit),
-      offset: offset
+      offset: offset,
+      include: [{
+        model: User,
+        as: 'operator',
+        attributes: ['id', 'username', 'nickname'],
+        required: false // LEFT JOIN，允许没有关联用户的记录
+      }]
     });
     
     const totalTime = Date.now() - startTime;
@@ -802,13 +828,20 @@ exports.getTaskRecords = async (req, res) => {
       data: {
         records: result.rows.map(record => {
           const recordData = record.toJSON();
-          // 确保操作人信息正确显示
+          // 优先使用关联查询的用户信息，fallback到存储的nickname
+          const operatorInfo = recordData.operator ? {
+            user_id: recordData.operator.id,
+            username: recordData.operator.username,
+            nickname: recordData.operator.nickname || recordData.operator.username
+          } : {
+            user_id: recordData.operator_user_id,
+            nickname: recordData.operator_nickname
+          };
+          
           return {
             ...recordData,
-            operator_info: {
-              user_id: recordData.operator_user_id,
-              nickname: recordData.operator_nickname
-            }
+            operator: undefined, // 移除原始的关联对象
+            operator_info: operatorInfo
           };
         }),
         pagination: {

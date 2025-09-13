@@ -1,10 +1,56 @@
 const CustomerLead = require('../models/leadModel');
 const FollowUpRecord = require('../models/followupModel');
 const FollowupRemindConfig = require('../models/followupRemindConfig');
-const { Op } = require('sequelize');
+const { Op, sequelize } = require('sequelize');
 const dayjs = require('dayjs');
 const { updateNeedFollowupByLeadId } = require('../services/followupRemindChecker');
 const User = require('../models/user');
+
+// 标准化客户名称用于去重比较
+function normalizeForDedup(name) {
+  if (!name || typeof name !== 'string') {
+    return '';
+  }
+  
+  return name
+    .replace(/\s+/g, '')           // 去除所有空格
+    .replace(/[（）()]/g, '()');    // 统一所有括号为半角括号，兼容中英文括号
+}
+
+// 计算字符串相似度（使用编辑距离算法）
+function calculateStringSimilarity(str1, str2) {
+  if (str1 === str2) return 1.0;
+  if (!str1 || !str2) return 0.0;
+  
+  const len1 = str1.length;
+  const len2 = str2.length;
+  const maxLen = Math.max(len1, len2);
+  
+  if (maxLen === 0) return 1.0;
+  
+  // 计算编辑距离
+  const dp = Array(len1 + 1).fill(null).map(() => Array(len2 + 1).fill(0));
+  
+  for (let i = 0; i <= len1; i++) dp[i][0] = i;
+  for (let j = 0; j <= len2; j++) dp[0][j] = j;
+  
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1,     // 删除
+          dp[i][j - 1] + 1,     // 插入
+          dp[i - 1][j - 1] + 1  // 替换
+        );
+      }
+    }
+  }
+  
+  const editDistance = dp[len1][len2];
+  return (maxLen - editDistance) / maxLen;
+}
 
 // 验证必填字段
 function validateLeadData(data) {
@@ -199,30 +245,94 @@ exports.createLead = async (req, res) => {
     // 记录数据库操作开始时间
     const dbStartTime = Date.now();
     
-    // 去重检查：对完整contact_name进行精确匹配
+    // 去重检查：精确匹配 + 标准化匹配
     if (data.contact_name) {
       const contactName = data.contact_name.trim();
+      const normalizedContactName = normalizeForDedup(contactName);
       
-      const existingLead = await CustomerLead.findOne({
+      // 详细的去重日志记录
+      console.log(`[去重检查] 开始检查客户名称: "${contactName}"`);
+      console.log(`[去重检查] 标准化后: "${normalizedContactName}"`);
+      console.log(`[去重检查] 字符长度: ${contactName.length}, 标准化长度: ${normalizedContactName.length}`);
+      
+      // 多级去重检查：先精确匹配，再标准化匹配
+      let existingLead = await CustomerLead.findOne({
         where: {
-          contact_name: contactName
+          contact_name: contactName  // 精确匹配（优先）
         },
         transaction
       });
       
+      // 如果精确匹配没找到，尝试标准化匹配
+      if (!existingLead) {
+        // 查找所有可能相似的记录（基于日期前缀）
+        const possibleDuplicates = await CustomerLead.findAll({
+          where: {
+            contact_name: {
+              [Op.like]: `${contactName.substring(0, 4)}%`  // 使用日期前缀查找
+            }
+          },
+          transaction,
+          limit: 20  // 限制查询结果
+        });
+        
+        // 在内存中进行标准化比较
+        for (const lead of possibleDuplicates) {
+          if (normalizeForDedup(lead.contact_name) === normalizedContactName) {
+            existingLead = lead;
+            break;
+          }
+        }
+      }
+      
       if (existingLead) {
         await transaction.rollback();
         const totalTime = Date.now() - startTime;
-        console.log(`去重检查：发现重复的contact_name: ${contactName}，跳过创建`);
+        const matchType = existingLead.contact_name === contactName ? '精确匹配' : '标准化匹配';
+        console.log(`[去重检查] 发现重复记录 (${matchType}) - 新客户: "${contactName}", 已存在ID: ${existingLead.id}, 已存在名称: "${existingLead.contact_name}"`);
+        console.log(`[去重检查] 标准化对比: 新记录="${normalizedContactName}", 已存在="${normalizeForDedup(existingLead.contact_name)}"`);
         return res.json({
           success: true,
           duplicate: true,
-          message: `联系名称 ${contactName} 已存在，跳过创建`,
+          message: `联系名称 ${contactName} 已存在(${matchType})，跳过创建`,
           existingId: existingLead.id,
+          matchType: matchType,
           performance: {
             totalTime: `${totalTime}ms`
           }
         });
+      } else {
+        // console.log(`[去重检查] 精确匹配未发现重复，进行模糊匹配检查...`);
+        
+        // 模糊匹配去重检查（辅助手段）- 临时禁用，避免日志过多
+        /*
+        const similarLeads = await CustomerLead.findAll({
+          where: {
+            contact_name: {
+              [Op.like]: `%${contactName.substring(0, 4)}%` // 使用前4个字符（日期部分）进行模糊匹配
+            }
+          },
+          transaction,
+          limit: 10 // 限制查询结果数量
+        });
+        
+        if (similarLeads.length > 0) {
+          console.log(`[模糊匹配] 找到 ${similarLeads.length} 个相似记录:`);
+          
+          for (const similarLead of similarLeads) {
+            const similarity = calculateStringSimilarity(contactName, similarLead.contact_name);
+            console.log(`[模糊匹配] ID: ${similarLead.id}, 名称: "${similarLead.contact_name}", 相似度: ${(similarity * 100).toFixed(2)}%`);
+            
+            // 如果相似度很高（95%以上），给出警告但不阻止创建
+            if (similarity > 0.95) {
+              console.log(`[模糊匹配] 警告：发现高相似度记录 (${(similarity * 100).toFixed(2)}%)，可能是繁简体差异导致的重复`);
+              console.log(`[模糊匹配] 新记录: "${contactName}" vs 已存在: "${similarLead.contact_name}"`);
+            }
+          }
+        }
+        */
+        
+        console.log(`[去重检查] 允许创建新记录: "${contactName}"`);
       }
     }
     
@@ -615,7 +725,9 @@ exports.getLeadDetail = async (req, res) => {
         'end_followup',
         'end_followup_reason',
         'current_follower',
-        'enable_followup'
+        'enable_followup',
+        'creator_user_id',
+        'assigned_user_id'
       ]
     });
     
@@ -635,7 +747,7 @@ exports.getLeadDetail = async (req, res) => {
       });
     }
     
-    // 新增：权限控制检查
+    // 权限控制检查
     const userRole = req.user.role;
     const userId = req.user.id;
     const leadData = lead.toJSON();

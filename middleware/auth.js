@@ -1,5 +1,13 @@
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'kehuxinxi_secret';
+
+// JWT密钥安全检查
+if (!process.env.JWT_SECRET) {
+  console.error('❌ 安全警告：未设置JWT_SECRET环境变量！请在.env文件中设置强密钥');
+  console.error('建议使用：node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))" 生成随机密钥');
+  process.exit(1);
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
 
 module.exports = function (req, res, next) {
   // 允许登录和注册接口不鉴权

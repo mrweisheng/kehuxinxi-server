@@ -1,0 +1,20 @@
+{
+  "path": "d:\\CODE PROJECT\\kehuxinxi\\kehuxinxi-backend",
+  "desc": "Node.js backend API for customer management system",
+  "id": "e5f052fa9fd94affbfd76dce283742ea",
+  "data": {
+    "spaceKey": "e5f052fa9fd94affbfd76dce283742ea",
+    "connections": {
+      "webIDE": "https://e5f052fa9fd94affbfd76dce283742ea.ap-singapore.cloudstudio.club",
+      "preview": "https://e5f052fa9fd94affbfd76dce283742ea--{port}.ap-singapore.cloudstudio.club",
+      "api": "https://e5f052fa9fd94affbfd76dce283742ea--api.ap-singapore.cloudstudio.club",
+      "pty": "https://e5f052fa9fd94affbfd76dce283742ea--pty.ap-singapore.cloudstudio.club"
+    }
+  },
+  "config": {
+    "api": "https://e5f052fa9fd94affbfd76dce283742ea--api.ap-singapore.cloudstudio.club",
+    "pty": "https://e5f052fa9fd94affbfd76dce283742ea--pty.ap-singapore.cloudstudio.club",
+    "region": "ap-shanghai",
+    "spaceKey": "e5f052fa9fd94affbfd76dce283742ea"
+  }
+}
