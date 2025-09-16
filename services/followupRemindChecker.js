@@ -42,11 +42,7 @@ async function checkOverdueLeads() {
     const globalEmailList = emailRecords.map(e => e.email);
     const now = dayjs();
     
-    // 先将所有启用跟进且未终结线索的need_followup重置为0
-    await CustomerLead.update({ need_followup: 0 }, { 
-      where: { end_followup: 0, enable_followup: 1 },
-      transaction 
-    });
+    // 注意：不再使用 need_followup 字段，完全基于 enable_followup 和 current_cycle_completed
     
     let overdueList = [];
 
@@ -108,14 +104,16 @@ async function checkOverdueLeads() {
       }
     }
     
-    // 对所有超期线索批量设置need_followup=1
+    // 对所有超期线索批量设置current_cycle_completed=0（标记为新周期未完成）
     const overdueIds = overdueList.map(item => item.lead_id);
     if (overdueIds.length > 0) {
-      await CustomerLead.update({ need_followup: 1 }, { 
+      await CustomerLead.update({
+        current_cycle_completed: 0
+      }, {
         where: { id: overdueIds },
-        transaction 
+        transaction
       });
-      console.log(`✅ 已标记 ${overdueIds.length} 条超期线索`);
+      console.log(`✅ 已重置 ${overdueIds.length} 条超期线索的跟进周期`);
     }
 
     // 提交事务
@@ -240,13 +238,15 @@ function startScheduledCheck() {
   });
 }
 
-// 工具函数：根据线索ID自动更新need_followup字段
+// 工具函数：根据线索ID自动更新current_cycle_completed字段（废弃need_followup）
 async function updateNeedFollowupByLeadId(leadId, transaction) {
   const lead = await CustomerLead.findByPk(leadId, { transaction });
   if (!lead) return;
-  // 已终结线索直接设为0
+  // 已终结线索直接设为已完成
   if (lead.end_followup === 1) {
-    await CustomerLead.update({ need_followup: 0 }, { where: { id: leadId }, transaction });
+    await CustomerLead.update({
+      current_cycle_completed: 1
+    }, { where: { id: leadId }, transaction });
     return;
   }
   const latestFollowUp = await FollowUpRecord.findOne({
@@ -259,12 +259,28 @@ async function updateNeedFollowupByLeadId(leadId, transaction) {
   const interval = config ? config.interval_days : 3;
   const now = dayjs();
   const overdue = now.diff(lastTime, 'day') >= interval;
-  await CustomerLead.update({ need_followup: overdue ? 1 : 0 }, { where: { id: leadId }, transaction });
+  await CustomerLead.update({
+    current_cycle_completed: overdue ? 0 : 1
+  }, { where: { id: leadId }, transaction });
+}
+
+// 新增函数：当创建跟进记录时，将当前跟进周期标记为已完成
+async function markCycleCompletedOnFollowUp(leadId, transaction) {
+  const lead = await CustomerLead.findByPk(leadId, { transaction });
+  if (!lead) return;
+
+  // 只有启用跟进的线索才需要更新
+  if (lead.enable_followup === 1) {
+    await CustomerLead.update({
+      current_cycle_completed: 1
+    }, { where: { id: leadId }, transaction });
+  }
 }
 
 module.exports = {
   checkOverdueLeads,
   sendOverdueRemindEmail,
   startScheduledCheck,
-  updateNeedFollowupByLeadId
+  updateNeedFollowupByLeadId,
+  markCycleCompletedOnFollowUp
 };
