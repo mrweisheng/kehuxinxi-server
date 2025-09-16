@@ -108,6 +108,13 @@ const CustomerLead = sequelize.define('customer_leads', {
     defaultValue: 0,
     comment: '是否启用跟进（1=启用，0=不启用）'
   },
+  // 新增字段：当前跟进周期是否已完成跟进
+  current_cycle_completed: {
+    type: DataTypes.TINYINT,
+    allowNull: false,
+    defaultValue: 0,
+    comment: '当前跟进周期是否已完成跟进（0=未完成，1=已完成）'
+  },
   created_at: {
     type: DataTypes.DATE,
     allowNull: false,

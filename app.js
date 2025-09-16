@@ -75,9 +75,7 @@ const PORT = process.env.PORT || 9527;
     
     app.listen(PORT, () => {
       console.log(`服务已启动，端口：${PORT}`);
-      // 启动时立即执行一次超期检测
-      checkOverdueLeads();
-      // 启动跟进提醒定时检查
+      // 启动跟进提醒定时检查（包含启动时执行）
       startScheduledCheck();
     });
   } catch (err) {

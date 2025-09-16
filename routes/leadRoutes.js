@@ -33,6 +33,8 @@ router.post('/', (req, res, next) => {
 }, leadController.createLead);
 // 获取线索列表
 router.get('/', authMiddleware, leadController.getLeads);
+// 获取重点客户列表
+router.get('/key-customers', authMiddleware, leadController.getKeyCustomers);
 // 导出客户线索
 router.get('/export', authMiddleware, leadController.exportLeads);
 // 获取线索详情

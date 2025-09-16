@@ -1,6 +1,6 @@
 const FollowUpRecord = require('../models/followupModel');
 const User = require('../models/user');
-const { updateNeedFollowupByLeadId } = require('../services/followupRemindChecker');
+const { updateNeedFollowupByLeadId, markCycleCompletedOnFollowUp } = require('../services/followupRemindChecker');
 
 // 验证跟进记录数据
 function validateFollowUpData(data) {
@@ -65,8 +65,8 @@ exports.createFollowUp = async (req, res) => {
     
     const dbStartTime = Date.now();
     const record = await FollowUpRecord.create(data);
-    // 新增：自动更新该线索的need_followup字段
-    await updateNeedFollowupByLeadId(data.lead_id);
+    // 新增：创建跟进记录后，将当前跟进周期标记为已完成
+    await markCycleCompletedOnFollowUp(data.lead_id);
     const dbEndTime = Date.now();
     
     const totalTime = Date.now() - startTime;
