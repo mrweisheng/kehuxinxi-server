@@ -184,20 +184,38 @@ exports.createLead = async (req, res) => {
     data.creator_user_id = parseInt(registrantId);
     data.assigned_user_id = parseInt(data.current_follower); // 确保类型转换为整数
     
-    // 自动填充follow_up_person字段（跟进人昵称，用于显示）
+    // 自动填充follow_up_person字段（跟进人昵称，用于显示）【支持用户缓存优化】
     if (!data.follow_up_person) {
       // 获取跟进人的昵称（跟进人ID = current_follower）
       try {
-        const User = require('../models/user');
         const followerUserId = data.current_follower;
-        const followerUser = await User.findByPk(followerUserId, { 
-          attributes: ['nickname', 'username'],
-          transaction 
-        });
-        if (followerUser) {
-          data.follow_up_person = followerUser.nickname || followerUser.username || `用户${followerUserId}`;
+        
+        // 【优化】检查是否有用户缓存
+        let userCache = null;
+        try {
+          if (req.headers['x-user-cache']) {
+            userCache = JSON.parse(req.headers['x-user-cache']);
+          }
+        } catch (e) {
+          // 忽略缓存解析错误
+        }
+        
+        // 优先使用缓存，缓存不存在时查询数据库
+        if (userCache && userCache[followerUserId]) {
+          console.log(`[LEAD-CREATE] 使用用户缓存 - 用户ID: ${followerUserId}`);
+          data.follow_up_person = userCache[followerUserId].nickname;
         } else {
-          data.follow_up_person = `用户${followerUserId}`;
+          console.log(`[LEAD-CREATE] 查询用户信息 - 用户ID: ${followerUserId}`);
+          const User = require('../models/user');
+          const followerUser = await User.findByPk(followerUserId, { 
+            attributes: ['nickname', 'username'],
+            transaction 
+          });
+          if (followerUser) {
+            data.follow_up_person = followerUser.nickname || followerUser.username || `用户${followerUserId}`;
+          } else {
+            data.follow_up_person = `用户${followerUserId}`;
+          }
         }
       } catch (error) {
         console.error('获取跟进人信息失败:', error);
@@ -246,8 +264,8 @@ exports.createLead = async (req, res) => {
     // 记录数据库操作开始时间
     const dbStartTime = Date.now();
     
-    // 去重检查：精确匹配 + 标准化匹配
-    if (data.contact_name) {
+    // 去重检查：精确匹配 + 标准化匹配【支持批量处理优化跳过】
+    if (data.contact_name && !req.headers['x-skip-duplicate-check']) {
       const contactName = data.contact_name.trim();
       const normalizedContactName = normalizeForDedup(contactName);
       

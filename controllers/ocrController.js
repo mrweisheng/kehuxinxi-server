@@ -106,19 +106,24 @@ const upload = multer({
   fileFilter: fileFilter
 });
 
-// OpenAI 客户端惰性初始化（硬编码配置）
-let openaiClient = null;
-const getOpenAIClient = () => {
-  if (openaiClient) return openaiClient;
+// 千问API客户端惰性初始化
+let qwenClient = null;
+const getQwenClient = () => {
+  if (qwenClient) return qwenClient;
 
   // 惰性引入 SDK，避免 require 钩子在初始化前介入
   const OpenAI = require('openai');
 
-  openaiClient = new OpenAI({
-    apiKey: '53c21a66-ebd5-4fec-875e-2fa8a8ba055b',
-    baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+  // 检查环境变量
+  if (!process.env.DASHSCOPE_API_KEY) {
+    throw new Error('DASHSCOPE_API_KEY 环境变量未设置');
+  }
+
+  qwenClient = new OpenAI({
+    apiKey: process.env.DASHSCOPE_API_KEY,
+    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
   });
-  return openaiClient;
+  return qwenClient;
 };
 
 // 将图片文件转换为base64
@@ -309,6 +314,62 @@ const batchRegisterLeads = async (taskId, customers, userInfo = null, assignedUs
   
   console.log(`[OCR-${taskId}] 初始化结果统计: ${JSON.stringify(results)}`);
   
+  // 【优化1】预查询用户信息缓存，避免重复查询
+  let userCache = {};
+  if (assignedUserId) {
+    console.log(`[OCR-${taskId}] 预查询跟进人信息 - 用户ID: ${assignedUserId}`);
+    try {
+      const User = require('../models/user');
+      const followerUser = await User.findByPk(assignedUserId, {
+        attributes: ['id', 'nickname', 'username']
+      });
+      if (followerUser) {
+        userCache[assignedUserId] = {
+          nickname: followerUser.nickname || followerUser.username,
+          username: followerUser.username
+        };
+        console.log(`[OCR-${taskId}] 用户信息缓存成功: ${JSON.stringify(userCache[assignedUserId])}`);
+      } else {
+        console.log(`[OCR-${taskId}] 警告: 未找到跟进人信息 - 用户ID: ${assignedUserId}`);
+      }
+    } catch (error) {
+      console.log(`[OCR-${taskId}] 用户信息查询失败: ${error.message}`);
+    }
+  }
+  
+  // 【优化2】批量去重查询，避免逐个查询
+  console.log(`[OCR-${taskId}] 开始批量去重检查`);
+  const allCustomerNames = customers.map(customer => customer.customer_name).filter(name => name);
+  let existingLeadsMap = new Map();
+  
+  if (allCustomerNames.length > 0) {
+    try {
+      const CustomerLead = require('../models/leadModel');
+      const { Op } = require('sequelize');
+      
+      console.log(`[OCR-${taskId}] 批量查询可能重复的客户名称，数量: ${allCustomerNames.length}`);
+      const existingLeads = await CustomerLead.findAll({
+        where: {
+          contact_name: {
+            [Op.in]: allCustomerNames
+          }
+        },
+        attributes: ['id', 'contact_name', 'customer_nickname']
+      });
+      
+      // 构建快速查找的Map
+      existingLeads.forEach(lead => {
+        existingLeadsMap.set(lead.contact_name, lead);
+      });
+      
+      console.log(`[OCR-${taskId}] 批量去重查询完成，找到已存在记录: ${existingLeads.length}个`);
+      if (existingLeads.length > 0) {
+        console.log(`[OCR-${taskId}] 已存在的客户名称: ${existingLeads.map(l => l.contact_name).join(', ')}`);
+      }
+    } catch (error) {
+      console.log(`[OCR-${taskId}] 批量去重查询失败: ${error.message}`);
+    }
+  }
   
   for (let i = 0; i < customers.length; i++) {
     const customer = customers[i];
@@ -335,6 +396,16 @@ const batchRegisterLeads = async (taskId, customers, userInfo = null, assignedUs
       }
       console.log(`[OCR-${taskId}] 日期格式化成功: ${leadTime}`);
       
+      // 【优化3】使用批量去重结果，避免重复查询
+      console.log(`[OCR-${taskId}] 检查去重结果 - 客户名称: ${validation.fullName}`);
+      const existingLead = existingLeadsMap.get(validation.fullName);
+      if (existingLead) {
+        console.log(`[OCR-${taskId}] 发现重复记录 - 客户: ${validation.fullName}, 已存在ID: ${existingLead.id}`);
+        results.duplicated++;
+        continue; // 跳过重复记录
+      }
+      console.log(`[OCR-${taskId}] 去重检查通过，允许创建新记录: ${validation.fullName}`);
+      
       // 构造线索数据
       const leadData = {
         customer_nickname: validation.fullName,
@@ -352,11 +423,15 @@ const batchRegisterLeads = async (taskId, customers, userInfo = null, assignedUs
       console.log(`[OCR-${taskId}] 构造的线索数据: ${JSON.stringify(leadData, null, 2)}`);
       
       
-      // 构造模拟的req和res对象
+      // 【优化4】构造模拟的req和res对象，使用缓存的用户信息
       console.log(`[OCR-${taskId}] 构造模拟请求对象`);
       const mockReq = {
         body: leadData,
-        headers: { 'x-batch-mode': 'true' },
+        headers: { 
+          'x-batch-mode': 'true',
+          'x-user-cache': JSON.stringify(userCache), // 传递用户缓存
+          'x-skip-duplicate-check': 'true' // 跳过leadController中的去重检查，因为已经在批量处理中检查过
+        },
         user: userInfo // 传递用户信息
       };
       
@@ -478,10 +553,10 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
     // 清理临时文件
     cleanupTempFile(filePath);
 
-    // 调用豆包API
-    console.log(`[OCR-${taskId}] 开始调用AI API`);
+    // 调用千问API
+    console.log(`[OCR-${taskId}] 开始调用千问AI API`);
     console.log(`[OCR-${taskId}] API调用参数:`);
-    console.log(`  - 模型: doubao-seed-1-6-250615`);
+    console.log(`  - 模型: qwen-vl-max`);
     console.log(`  - 提示词长度: ${prompt.length} 字符`);
     console.log(`  - base64图片大小: ${base64Image.length} 字符`);
     
@@ -490,7 +565,8 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
     let apiCallTime;
     
     try {
-      response = await getOpenAIClient().chat.completions.create({
+      response = await getQwenClient().chat.completions.create({
+        model: 'qwen-vl-max',
         messages: [
           {
             role: 'user',
@@ -505,7 +581,6 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
             ],
           },
         ],
-        model: 'doubao-seed-1-6-250615',
       });
       apiCallTime = Date.now() - apiCallStart;
       console.log(`[OCR-${taskId}] AI API调用成功 - 耗时: ${apiCallTime}ms`);
