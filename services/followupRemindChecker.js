@@ -76,10 +76,22 @@ async function checkOverdueLeads() {
             const lastFollowUpObj = leadData.followUps && leadData.followUps.length > 0 ? leadData.followUps[0] : null;
             const lastFollowUp = lastFollowUpObj ? lastFollowUpObj.follow_up_time : null;
             const lastFollowUpContent = lastFollowUpObj ? lastFollowUpObj.follow_up_content : null;
-            const lastTime = lastFollowUp ? dayjs(lastFollowUp) : dayjs(leadData.lead_time);
-            const diffDays = now.diff(lastTime, 'day');
-            
-            if (diffDays >= config.interval_days) {
+            // 🔧 修复：只计算整天数，忽略时分秒
+            const lastTime = lastFollowUp ? dayjs(lastFollowUp).startOf('day') : dayjs(leadData.lead_time).startOf('day');
+            const currentTime = now.startOf('day');
+            const diffDays = currentTime.diff(lastTime, 'day'); // 只计算整天数
+
+            // 🔧 超期判断：相差天数 >= 配置天数
+            const isOverdue = diffDays >= config.interval_days;
+
+            console.log(`🔍 线索 ${leadData.id} (${leadData.customer_nickname}):`);
+            console.log(`   最后跟进日期: ${lastTime.format('YYYY-MM-DD')}`);
+            console.log(`   当前日期: ${currentTime.format('YYYY-MM-DD')}`);
+            console.log(`   相差整天数: ${diffDays}天`);
+            console.log(`   配置天数: ${config.interval_days}天`);
+            console.log(`   是否超期: ${isOverdue}`);
+
+            if (isOverdue) {
               overdueList.push({
                 lead_id: leadData.id,
                 customer_nickname: leadData.customer_nickname,
@@ -254,11 +266,13 @@ async function updateNeedFollowupByLeadId(leadId, transaction) {
     order: [['follow_up_time', 'DESC']],
     transaction
   });
-  const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time) : dayjs(lead.lead_time);
+  // 🔧 修复：只计算整天数，忽略时分秒
+  const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time).startOf('day') : dayjs(lead.lead_time).startOf('day');
+  const currentTime = dayjs().startOf('day');
   const config = await FollowupRemindConfig.findOne({ where: { intention_level: lead.intention_level }, transaction });
   const interval = config ? config.interval_days : 3;
-  const now = dayjs();
-  const overdue = now.diff(lastTime, 'day') >= interval;
+  const diffDays = currentTime.diff(lastTime, 'day');
+  const overdue = diffDays >= interval;
   await CustomerLead.update({
     current_cycle_completed: overdue ? 0 : 1
   }, { where: { id: leadId }, transaction });
