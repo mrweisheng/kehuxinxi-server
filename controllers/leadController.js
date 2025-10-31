@@ -6,6 +6,8 @@ const sequelize = require('../config/db');
 const dayjs = require('dayjs');
 const { updateNeedFollowupByLeadId } = require('../services/followupRemindChecker');
 const User = require('../models/user');
+const { getTodayFollowUpStats } = require('../utils/todayFollowUpStats');
+const { getFollowupConfigs } = require('../utils/configCache');
 
 // 标准化客户名称用于去重比较
 function normalizeForDedup(name) {
@@ -480,11 +482,19 @@ exports.getLeads = async (req, res) => {
     if (enable_followup !== undefined) where.enable_followup = parseInt(enable_followup);
     if (customer_nickname) where.customer_nickname = { [Op.like]: `%${customer_nickname}%` };
     if (date_from && date_to) {
-      where.lead_time = { 
+      where.lead_time = {
         [Op.between]: [
-          `${date_from} 00:00:00`, 
+          `${date_from} 00:00:00`,
           `${date_to} 23:59:59`
-        ] 
+        ]
+      };
+    } else if (date_from) {
+      // 单个日期查询，查询该日期的数据
+      where.lead_time = {
+        [Op.between]: [
+          `${date_from} 00:00:00`,
+          `${date_from} 23:59:59`
+        ]
       };
     }
     const cleanKeyword = typeof keyword === 'string' ? keyword.trim() : '';
@@ -546,12 +556,8 @@ exports.getLeads = async (req, res) => {
     const offset = (page - 1) * page_size;
     const dbStartTime = Date.now();
     
-    // 查询意向等级对应的最大未跟进天数配置
-    const remindConfigs = await FollowupRemindConfig.findAll({ raw: true });
-    const configMap = {};
-    remindConfigs.forEach(cfg => {
-      configMap[cfg.intention_level] = cfg.interval_days;
-    });
+    // 查询意向等级对应的最大未跟进天数配置（使用缓存）
+    const configMap = await getFollowupConfigs();
     
     // 修改排序：优先显示启用跟进且当前周期未完成的线索，然后按进线索时间排序
     const { count, rows } = await CustomerLead.findAndCountAll({
@@ -628,19 +634,19 @@ exports.getLeads = async (req, res) => {
     });
 
     // 构建跟进记录映射，手动取每个线索的最新记录
-    const followUpMap = {};
+    const finalFollowUpMap = {};
     latestFollowUps.forEach(followUp => {
       // 如果该线索还没有记录，或者当前记录更新，则更新映射
-      if (!followUpMap[followUp.lead_id] || 
-          new Date(followUp.follow_up_time) > new Date(followUpMap[followUp.lead_id].follow_up_time)) {
-        followUpMap[followUp.lead_id] = followUp;
+      if (!finalFollowUpMap[followUp.lead_id] || 
+          new Date(followUp.follow_up_time) > new Date(finalFollowUpMap[followUp.lead_id].follow_up_time)) {
+        finalFollowUpMap[followUp.lead_id] = followUp;
       }
     });
 
     // 直接返回数据库 need_followup 字段
     const processedRows = rows.map(lead => {
       const leadData = lead.toJSON();
-      const latestFollowUp = followUpMap[leadData.id];
+      const latestFollowUp = finalFollowUpMap[leadData.id];
       return {
         ...leadData,
         current_follower: leadData.currentFollowerUser
@@ -707,12 +713,8 @@ exports.getLeadDetail = async (req, res) => {
     
     const dbStartTime = Date.now();
     
-    // 查询意向等级对应的最大未跟进天数配置
-    const remindConfigs = await FollowupRemindConfig.findAll({ raw: true });
-    const configMap = {};
-    remindConfigs.forEach(cfg => {
-      configMap[cfg.intention_level] = cfg.interval_days;
-    });
+    // 查询意向等级对应的最大未跟进天数配置（使用缓存）
+    const configMap = await getFollowupConfigs();
     
     // 使用关联查询获取线索及其最新跟进记录
     const lead = await CustomerLead.findByPk(id, {
@@ -815,9 +817,12 @@ exports.getLeadDetail = async (req, res) => {
     const latestFollowUp = leadData.followUps && leadData.followUps.length > 0
       ? leadData.followUps[0]
       : null;
-    const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time) : dayjs(leadData.lead_time);
+    // 🔧 修复：只计算整天数，忽略时分秒
+    const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time).startOf('day') : dayjs(leadData.lead_time).startOf('day');
+    const currentTime = now.startOf('day');
     const interval = configMap[leadData.intention_level] || 3;
-    const overdue = now.diff(lastTime, 'day') >= interval;
+    const diffDays = currentTime.diff(lastTime, 'day');
+    const overdue = diffDays >= interval;
     const processedData = {
       ...leadData,
       latest_follow_up: latestFollowUp ? {
@@ -1402,18 +1407,18 @@ exports.exportLeads = async (req, res) => {
     });
 
     // 构建跟进记录映射，取每个线索的最新记录
-    const followUpMap = {};
+    const finalFollowUpMap = {};
     latestFollowUps.forEach(followUp => {
-      if (!followUpMap[followUp.lead_id] || 
-          new Date(followUp.follow_up_time) > new Date(followUpMap[followUp.lead_id].follow_up_time)) {
-        followUpMap[followUp.lead_id] = followUp;
+      if (!finalFollowUpMap[followUp.lead_id] || 
+          new Date(followUp.follow_up_time) > new Date(finalFollowUpMap[followUp.lead_id].follow_up_time)) {
+        finalFollowUpMap[followUp.lead_id] = followUp;
       }
     });
 
     // 处理数据，添加最新跟进信息
     const exportData = leads.map(lead => {
       const leadData = lead.toJSON();
-      const latestFollowUp = followUpMap[leadData.id];
+      const latestFollowUp = finalFollowUpMap[leadData.id];
       
       return {
         // 基本信息
@@ -1484,11 +1489,11 @@ exports.exportLeads = async (req, res) => {
   }
 };
 
-// 获取重点客户列表（已启用跟进的线索）
+// 获取重点客户列表（今日需要跟进的线索）
 exports.getKeyCustomers = async (req, res) => {
   const startTime = Date.now();
   try {
-    const { page = 1, page_size = 20 } = req.query;
+    const { page = 1, page_size = 20, intention_level, status_type } = req.query;
     const userRole = req.user.role;
     const userId = req.user.id;
 
@@ -1500,22 +1505,28 @@ exports.getKeyCustomers = async (req, res) => {
     const where = {
       enable_followup: 1,
       end_followup: 0
+      // 移除 current_cycle_completed 限制，显示所有已启用跟进的线索
     };
 
     // 权限控制
     if (userRole !== 'admin') {
-      // 非管理员只能查看自己登记或跟进的线索
-      where[Op.or] = [
-        { creator_user_id: userId },
-        { current_follower: userId }
-      ];
-      console.log('权限控制: 非管理员用户，只能查看自己登记或跟进的线索');
+      // 非管理员只能查看自己跟进的线索（重点客户页面主要给销售看今日跟进）
+      where.current_follower = userId;
+      console.log('权限控制: 非管理员用户，只能查看自己跟进的线索');
     }
 
-    // 获取分页数据
+    // 添加意向等级筛选
+    if (intention_level) {
+      where.intention_level = intention_level;
+    }
+
+    // 获取今日跟进统计信息
+    const stats = await getTodayFollowUpStats(userId, userRole);
+
+    // 直接获取所有已启用跟进的线索（分页查询）
     const offset = (page - 1) * page_size;
-    const { count, rows: leads } = await CustomerLead.findAndCountAll({
-      where,
+    const { count, rows: finalLeads } = await CustomerLead.findAndCountAll({
+      where: where,
       include: [
         {
           model: User,
@@ -1533,56 +1544,57 @@ exports.getKeyCustomers = async (req, res) => {
       offset: offset
     });
 
-    // 获取所有线索ID用于批量查询跟进记录
-    const leadIds = leads.map(lead => lead.id);
+    const totalCount = count;
 
-    // 批量查询最新跟进记录
-    const latestFollowUps = await FollowUpRecord.findAll({
-      attributes: [
-        'lead_id',
-        'follow_up_time',
-        'follow_up_content',
-        'follow_up_method',
-        'follow_up_result'
-      ],
-      where: {
-        lead_id: { [Op.in]: leadIds }
-      },
-      order: [['follow_up_time', 'DESC']],
-      raw: true
+    // 获取最终线索ID用于批量查询跟进记录
+    const finalLeadIds = finalLeads.map(lead => lead.id);
+
+    // 优化：使用子查询批量获取每个线索的最新跟进记录
+    let finalLatestFollowUps = [];
+    
+    if (finalLeadIds.length > 0) {
+      const latestFollowUpSubquery = `
+        SELECT 
+          f1.lead_id,
+          f1.follow_up_time,
+          f1.follow_up_content,
+          f1.follow_up_method,
+          f1.follow_up_result
+        FROM follow_up_records f1
+        INNER JOIN (
+          SELECT lead_id, MAX(follow_up_time) as max_time
+          FROM follow_up_records 
+          WHERE lead_id IN (:leadIds)
+          GROUP BY lead_id
+        ) f2 ON f1.lead_id = f2.lead_id AND f1.follow_up_time = f2.max_time
+      `;
+
+      finalLatestFollowUps = await sequelize.query(latestFollowUpSubquery, {
+        replacements: { leadIds: finalLeadIds },
+        type: sequelize.QueryTypes.SELECT
+      });
+    }
+
+    // 构建跟进记录映射
+    const resultFollowUpMap = {};
+    finalLatestFollowUps.forEach(followUp => {
+      resultFollowUpMap[followUp.lead_id] = followUp;
     });
 
-    // 构建跟进记录映射，取每个线索的最新记录
-    const followUpMap = {};
-    latestFollowUps.forEach(followUp => {
-      if (!followUpMap[followUp.lead_id] ||
-          new Date(followUp.follow_up_time) > new Date(followUpMap[followUp.lead_id].follow_up_time)) {
-        followUpMap[followUp.lead_id] = followUp;
-      }
-    });
-
-    // 获取跟进配置
-    const configs = await FollowupRemindConfig.findAll({
-      attributes: ['intention_level', 'interval_days'],
-      raw: true
-    });
-
-    // 构建配置映射
-    const configMap = {};
-    configs.forEach(config => {
-      configMap[config.intention_level] = config.interval_days;
-    });
+    // 获取跟进配置（使用缓存）
+    const resultConfigMap = await getFollowupConfigs();
 
     // 计算距离下次跟进的时间
-    const now = dayjs();
-    const result = leads.map(lead => {
+    const resultNow = dayjs();
+    const result = finalLeads.map(lead => {
       const leadData = lead.toJSON();
-      const latestFollowUp = followUpMap[leadData.id];
-      const intervalDays = configMap[leadData.intention_level] || 7; // 默认7天
+      const latestFollowUp = resultFollowUpMap[leadData.id];
+      const intervalDays = resultConfigMap[leadData.intention_level] || 7; // 默认7天
 
-      // 计算时间差
-      const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time) : dayjs(leadData.lead_time);
-      const diffDays = now.diff(lastTime, 'day');
+      // 🔧 修复：只计算整天数，忽略时分秒
+      const lastTime = latestFollowUp ? dayjs(latestFollowUp.follow_up_time).startOf('day') : dayjs(leadData.lead_time).startOf('day');
+      const currentTime = resultNow.startOf('day');
+      const diffDays = currentTime.diff(lastTime, 'day');
       const remainingDays = intervalDays - diffDays;
 
       // 构建跟进状态描述
@@ -1648,20 +1660,49 @@ exports.getKeyCustomers = async (req, res) => {
       };
     });
 
+    // 按跟进紧急程度排序：超期 > 今日 > 正常（按剩余天数升序） > 等待下一周期
+    result.sort((a, b) => {
+      // 1. 超期线索优先（remainingDays < 0）
+      if (a.remaining_days < 0 && b.remaining_days >= 0) return -1;
+      if (b.remaining_days < 0 && a.remaining_days >= 0) return 1;
+      
+      // 2. 都是超期的，按超期天数降序（超期越久越靠前）
+      if (a.remaining_days < 0 && b.remaining_days < 0) {
+        return a.remaining_days - b.remaining_days; // 负数越小越靠前
+      }
+      
+      // 3. 今日需要跟进优先（remainingDays = 0）
+      if (a.remaining_days === 0 && b.remaining_days > 0) return -1;
+      if (b.remaining_days === 0 && a.remaining_days > 0) return 1;
+      
+      // 4. 等待下一周期排最后
+      if (a.current_cycle_completed === 1 && b.current_cycle_completed === 0) return 1;
+      if (b.current_cycle_completed === 1 && a.current_cycle_completed === 0) return -1;
+      
+      // 5. 正常跟进按剩余天数升序（剩余天数越少越靠前）
+      if (a.remaining_days > 0 && b.remaining_days > 0) {
+        return a.remaining_days - b.remaining_days;
+      }
+      
+      // 6. 其他情况保持原顺序
+      return 0;
+    });
+
     const dbEndTime = Date.now();
     const totalTime = Date.now() - startTime;
     const dbTime = dbEndTime - dbStartTime;
 
-    console.log(`获取重点客户完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms, 总数: ${count}, 当前页: ${result.length}`);
+    console.log(`获取重点客户完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms, 总数: ${totalCount}, 当前页: ${result.length}`);
 
     res.json({
       success: true,
       data: result,
+      stats: stats,
       pagination: {
         current_page: parseInt(page),
         page_size: parseInt(page_size),
-        total: count,
-        total_pages: Math.ceil(count / page_size)
+        total: totalCount,
+        total_pages: Math.ceil(totalCount / page_size)
       },
       performance: {
         totalTime: `${totalTime}ms`,
@@ -1783,26 +1824,61 @@ exports.enableFollowup = async (req, res) => {
       where: { id },
       transaction
     });
-    
-    // 创建启用跟进的记录
+
+    let followUp = null;
+
+    // 🔧 修改：启用跟进必须提供跟进内容
+    const { follow_up_content, follow_up_method } = req.body;
+
+    // 验证必须提供跟进内容
+    if (!follow_up_content || !follow_up_content.trim()) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '启用跟进必须填写跟进内容',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+
+    // 验证跟进方式
+    if (!follow_up_method || !follow_up_method.trim()) {
+      await transaction.rollback();
+      const totalTime = Date.now() - startTime;
+      return res.status(400).json({
+        success: false,
+        message: '请选择跟进方式',
+        performance: {
+          totalTime: `${totalTime}ms`
+        }
+      });
+    }
+
+    // 创建首次跟进记录
     const now = new Date();
-    const currentTimeStr = now.getFullYear() + '-' + 
-      String(now.getMonth() + 1).padStart(2, '0') + '-' + 
-      String(now.getDate()).padStart(2, '0') + ' ' + 
-      String(now.getHours()).padStart(2, '0') + ':' + 
-      String(now.getMinutes()).padStart(2, '0') + ':' + 
+    const currentTimeStr = now.getFullYear() + '-' +
+      String(now.getMonth() + 1).padStart(2, '0') + '-' +
+      String(now.getDate()).padStart(2, '0') + ' ' +
+      String(now.getHours()).padStart(2, '0') + ':' +
+      String(now.getMinutes()).padStart(2, '0') + ':' +
       String(now.getSeconds()).padStart(2, '0');
-    
+
     const followUpData = {
       lead_id: id,
       follow_up_time: currentTimeStr,
-      follow_up_method: '启用跟进',
-      follow_up_content: '启用跟进功能，开始跟进周期',
-      follow_up_result: '已启用',
+      follow_up_method: follow_up_method,
+      follow_up_content: follow_up_content,
+      follow_up_result: '已跟进',
       follow_up_person_id: userId
     };
-    
-    const followUp = await FollowUpRecord.create(followUpData, { transaction });
+
+    followUp = await FollowUpRecord.create(followUpData, { transaction });
+
+    // 创建跟进记录后，将当前跟进周期标记为已完成
+    const { markCycleCompletedOnFollowUp } = require('../services/followupRemindChecker');
+    await markCycleCompletedOnFollowUp(id, transaction);
     
     // 提交事务
     await transaction.commit();
@@ -1812,10 +1888,10 @@ exports.enableFollowup = async (req, res) => {
     const dbTime = dbEndTime - dbStartTime;
     
     console.log(`启用跟进完成 - 总耗时: ${totalTime}ms, 数据库操作耗时: ${dbTime}ms`);
-    
-    res.json({ 
-      success: true, 
-      message: '跟进功能启用成功',
+
+    res.json({
+      success: true,
+      message: '跟进功能启用成功，已创建首次跟进记录',
       followUpId: followUp.id,
       performance: {
         totalTime: `${totalTime}ms`,

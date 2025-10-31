@@ -19,9 +19,49 @@ function formatDate(date, end = false) {
 exports.getLeadsOverview = async (req, res) => {
   const startTime = Date.now();
   try {
+    // 获取筛选参数
+    const { assigned_user_id, date_from, date_to } = req.query;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+
+    // 权限控制：只有管理员可以使用筛选功能
+    if ((assigned_user_id || date_from || date_to) && userRole !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: '只有管理员可以使用筛选功能'
+      });
+    }
+
+    console.log(`获取线索统计概览 - 角色: ${userRole}, 筛选参数: assigned_user_id=${assigned_user_id}, date_from=${date_from}, date_to=${date_to}`);
+
     const dbStartTime = Date.now();
-    // 1. 总线索数量
-    const totalLeads = await CustomerLead.count({ raw: true });
+    
+    // 构建基础查询条件
+    let whereCondition = '';
+    let replacements = {};
+    
+    if (assigned_user_id) {
+      whereCondition += ' AND assigned_user_id = :assigned_user_id';
+      replacements.assigned_user_id = assigned_user_id;
+    }
+    
+    if (date_from) {
+      whereCondition += ' AND lead_time >= :date_from';
+      replacements.date_from = date_from + ' 00:00:00';
+    }
+    
+    if (date_to) {
+      whereCondition += ' AND lead_time <= :date_to';
+      replacements.date_to = date_to + ' 23:59:59';
+    }
+
+    // 1. 总线索数量（应用筛选条件）
+    let totalLeadsQuery = 'SELECT COUNT(*) as count FROM customer_leads WHERE 1=1' + whereCondition;
+    const totalLeadsResult = await CustomerLead.sequelize.query(totalLeadsQuery, {
+      replacements,
+      type: QueryTypes.SELECT
+    });
+    const totalLeads = parseInt(totalLeadsResult[0].count);
 
     // 2. 时间变量声明
     const today = new Date();
@@ -36,8 +76,8 @@ exports.getLeadsOverview = async (req, res) => {
     const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
     const monthEndStr = formatDate(monthEnd, true);
 
-    // 3. intention_distribution、platform_distribution、recent_additions 合并SQL
-    const statsRows = await CustomerLead.sequelize.query(`
+    // 3. intention_distribution、platform_distribution、recent_additions 合并SQL（应用筛选条件）
+    const statsQuery = `
       SELECT
         intention_level,
         source_platform,
@@ -46,9 +86,12 @@ exports.getLeadsOverview = async (req, res) => {
         SUM(CASE WHEN lead_time >= :weekStart AND lead_time <= :weekEnd THEN 1 ELSE 0 END) AS this_week,
         SUM(CASE WHEN lead_time >= :monthStart AND lead_time <= :monthEnd THEN 1 ELSE 0 END) AS this_month
       FROM customer_leads
+      WHERE 1=1${whereCondition}
       GROUP BY intention_level, source_platform
-    `, {
+    `;
+    const statsRows = await CustomerLead.sequelize.query(statsQuery, {
       replacements: {
+        ...replacements,
         todayStart: todayStartStr,
         todayEnd: todayEndStr,
         weekStart: weekStartStr,
@@ -74,16 +117,17 @@ exports.getLeadsOverview = async (req, res) => {
       thisMonthLeads += parseInt(row.this_month);
     });
 
-    // 5. 最近15天每一天的线索数量（以lead_time为准）
+    // 5. 最近15天每一天的线索数量（以lead_time为准，应用筛选条件）
     const last15Start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 14);
     const last15StartStr = formatDate(last15Start, false);
-    const last15DaysRaw = await CustomerLead.sequelize.query(
-      `SELECT DATE(lead_time) AS date, COUNT(*) AS count FROM customer_leads WHERE lead_time >= :startDate GROUP BY DATE(lead_time) ORDER BY date ASC`,
-      {
-        replacements: { startDate: last15StartStr },
-        type: QueryTypes.SELECT
-      }
-    );
+    const last15DaysQuery = `SELECT DATE(lead_time) AS date, COUNT(*) AS count FROM customer_leads WHERE lead_time >= :startDate${whereCondition} GROUP BY DATE(lead_time) ORDER BY date ASC`;
+    const last15DaysRaw = await CustomerLead.sequelize.query(last15DaysQuery, {
+      replacements: { 
+        ...replacements,
+        startDate: last15StartStr 
+      },
+      type: QueryTypes.SELECT
+    });
     const last15Days = [];
     for (let i = 14; i >= 0; i--) {
       const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
@@ -118,31 +162,90 @@ exports.getLeadsOverview = async (req, res) => {
     });
 
     // 7. 今日统计
-    const todayFollowedLeads = await FollowUpRecord.aggregate('lead_id', 'count', {
-      distinct: true,
-      where: {
-        follow_up_time: {
-          [Op.gte]: todayStartStr,
-          [Op.lte]: todayEndStr
-        }
+    // 构建今日跟进统计的查询条件
+    let todayFollowupWhere = {
+      follow_up_time: {
+        [Op.gte]: todayStartStr,
+        [Op.lte]: todayEndStr
       }
-    });
-    const todayFollowupRecords = await FollowUpRecord.count({
-      where: {
-        follow_up_time: {
-          [Op.gte]: todayStartStr,
-          [Op.lte]: todayEndStr
-        }
+    };
+    
+    // 声明变量
+    let todayFollowedLeads = 0;
+    let todayFollowupRecords = 0;
+    
+    // 如果有销售员筛选，需要通过关联查询
+    if (assigned_user_id) {
+      // 使用原生SQL查询以支持JOIN
+      const todayFollowedLeadsQuery = `
+        SELECT COUNT(DISTINCT fr.lead_id) as count
+        FROM follow_up_records fr
+        JOIN customer_leads cl ON fr.lead_id = cl.id
+        WHERE fr.follow_up_time >= :todayStart 
+        AND fr.follow_up_time <= :todayEnd
+        AND cl.assigned_user_id = :assigned_user_id
+      `;
+      const todayFollowedResult = await FollowUpRecord.sequelize.query(todayFollowedLeadsQuery, {
+        replacements: {
+          todayStart: todayStartStr,
+          todayEnd: todayEndStr,
+          assigned_user_id: assigned_user_id
+        },
+        type: QueryTypes.SELECT
+      });
+      todayFollowedLeads = todayFollowedResult[0]?.count || 0;
+      
+      const todayFollowupRecordsQuery = `
+        SELECT COUNT(*) as count
+        FROM follow_up_records fr
+        JOIN customer_leads cl ON fr.lead_id = cl.id
+        WHERE fr.follow_up_time >= :todayStart 
+        AND fr.follow_up_time <= :todayEnd
+        AND cl.assigned_user_id = :assigned_user_id
+      `;
+      const todayFollowupResult = await FollowUpRecord.sequelize.query(todayFollowupRecordsQuery, {
+        replacements: {
+          todayStart: todayStartStr,
+          todayEnd: todayEndStr,
+          assigned_user_id: assigned_user_id
+        },
+        type: QueryTypes.SELECT
+      });
+      todayFollowupRecords = todayFollowupResult[0]?.count || 0;
+    } else {
+      // 没有筛选条件时使用原来的查询
+      todayFollowedLeads = await FollowUpRecord.aggregate('lead_id', 'count', {
+        distinct: true,
+        where: todayFollowupWhere
+      });
+      todayFollowupRecords = await FollowUpRecord.count({
+        where: todayFollowupWhere
+      });
+    }
+    // 构建todayEndedLeads的查询条件
+    let todayEndedWhere = {
+      end_followup: 1,
+      updated_at: {
+        [Op.gte]: todayStartStr,
+        [Op.lte]: todayEndStr
       }
-    });
+    };
+    
+    // 应用筛选条件
+    if (assigned_user_id) {
+      todayEndedWhere.assigned_user_id = assigned_user_id;
+    }
+    if (date_from) {
+      todayEndedWhere.lead_time = todayEndedWhere.lead_time || {};
+      todayEndedWhere.lead_time[Op.gte] = date_from + ' 00:00:00';
+    }
+    if (date_to) {
+      todayEndedWhere.lead_time = todayEndedWhere.lead_time || {};
+      todayEndedWhere.lead_time[Op.lte] = date_to + ' 23:59:59';
+    }
+    
     const todayEndedLeads = await CustomerLead.count({
-      where: {
-        end_followup: 1,
-        updated_at: {
-          [Op.gte]: todayStartStr,
-          [Op.lte]: todayEndStr
-        }
-      }
+      where: todayEndedWhere
     });
 
     // 8. 性能统计
@@ -418,6 +521,13 @@ exports.getLastWeekStats = async (req, res) => {
   const startTime = Date.now();
   
   try {
+    // 权限控制：只有管理员可以查看完整统计，销售员只能看自己的数据
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    const { assigned_user_id } = req.query;
+    
+    console.log(`获取上周统计 - 角色: ${userRole}, 用户ID: ${userId}, 筛选销售员: ${assigned_user_id}`);
+    
     const dbStartTime = Date.now();
     
     // 计算前一个完整自然周的时间范围（周一到周日）
@@ -439,6 +549,20 @@ exports.getLastWeekStats = async (req, res) => {
       weekDates.push(formatDate(date, false).slice(0, 10));
     }
     
+    // 构建权限过滤条件
+    let whereCondition = 'cl.lead_time BETWEEN ? AND ?';
+    let replacements = [weekStartStr, weekEndStr];
+    
+    // 如果不是管理员，只能查看自己负责的线索
+    if (userRole !== 'admin') {
+      whereCondition += ' AND cl.current_follower = ?';
+      replacements.push(userId);
+    } else if (assigned_user_id) {
+      // 管理员可以按销售员筛选
+      whereCondition += ' AND cl.current_follower = ?';
+      replacements.push(assigned_user_id);
+    }
+    
     // 查询平台统计
     const platformQuery = `
       SELECT 
@@ -448,7 +572,7 @@ exports.getLastWeekStats = async (req, res) => {
       FROM customer_leads cl
       LEFT JOIN lead_sources ls ON ls.platform = cl.source_platform 
         AND ls.account = cl.source_account
-      WHERE cl.lead_time BETWEEN ? AND ?
+      WHERE ${whereCondition}
       GROUP BY COALESCE(ls.platform, cl.source_platform), DATE(cl.lead_time)
       ORDER BY platform, date
     `;
@@ -463,7 +587,7 @@ exports.getLastWeekStats = async (req, res) => {
       FROM customer_leads cl
       LEFT JOIN lead_sources ls ON ls.platform = cl.source_platform 
         AND ls.account = cl.source_account
-      WHERE cl.lead_time BETWEEN ? AND ?
+      WHERE ${whereCondition}
       GROUP BY COALESCE(ls.platform, cl.source_platform), 
                COALESCE(ls.account, cl.source_account), 
                DATE(cl.lead_time)
@@ -476,24 +600,24 @@ exports.getLastWeekStats = async (req, res) => {
         DATE(cl.lead_time) as date,
         COUNT(cl.id) as count
       FROM customer_leads cl
-      WHERE cl.lead_time BETWEEN ? AND ?
+      WHERE ${whereCondition}
       GROUP BY DATE(cl.lead_time)
       ORDER BY date
     `;
     
     // 执行查询
     const platformResults = await CustomerLead.sequelize.query(platformQuery, {
-      replacements: [weekStartStr, weekEndStr],
+      replacements: replacements,
       type: QueryTypes.SELECT
     });
     
     const accountResults = await CustomerLead.sequelize.query(accountQuery, {
-      replacements: [weekStartStr, weekEndStr],
+      replacements: replacements,
       type: QueryTypes.SELECT
     });
     
     const dailyTotalResults = await CustomerLead.sequelize.query(dailyTotalQuery, {
-      replacements: [weekStartStr, weekEndStr],
+      replacements: replacements,
       type: QueryTypes.SELECT
     });
     
@@ -579,13 +703,36 @@ exports.getPlatformAccountSummary = async (req, res) => {
   const startTime = Date.now();
   
   try {
+    // 权限控制：只有管理员可以查看完整统计，销售员只能看自己的数据
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    const { assigned_user_id } = req.query;
+    
+    console.log(`获取平台账号汇总 - 角色: ${userRole}, 用户ID: ${userId}, 筛选销售员: ${assigned_user_id}`);
+    
     const dbStartTime = Date.now();
     
     // 1. 总线索数量
-    const totalLeads = await CustomerLead.count();
+    let totalLeads;
+    if (userRole === 'admin') {
+      if (assigned_user_id) {
+        // 管理员按销售员筛选
+        totalLeads = await CustomerLead.count({
+          where: { current_follower: assigned_user_id }
+        });
+      } else {
+        // 管理员查看全部
+        totalLeads = await CustomerLead.count();
+      }
+    } else {
+      // 销售员只能看自己的数据
+      totalLeads = await CustomerLead.count({
+        where: { current_follower: userId }
+      });
+    }
     
     // 2. 按平台和账号统计线索数量
-    const platformAccountQuery = `
+    let platformAccountQuery = `
       SELECT 
         CASE 
           WHEN cl.source_platform IS NULL OR cl.source_platform = '' OR cl.source_platform = '未知' 
@@ -598,7 +745,20 @@ exports.getPlatformAccountSummary = async (req, res) => {
           ELSE cl.source_account
         END as account,
         COUNT(*) as lead_count
-      FROM customer_leads cl
+      FROM customer_leads cl`;
+    
+    // 添加权限过滤条件
+    let queryReplacements = [];
+    if (userRole !== 'admin') {
+      platformAccountQuery += ` WHERE cl.current_follower = ?`;
+      queryReplacements.push(userId);
+    } else if (assigned_user_id) {
+      // 管理员可以按销售员筛选
+      platformAccountQuery += ` WHERE cl.current_follower = ?`;
+      queryReplacements.push(assigned_user_id);
+    }
+    
+    platformAccountQuery += `
       GROUP BY 
         CASE 
           WHEN cl.source_platform IS NULL OR cl.source_platform = '' OR cl.source_platform = '未知' 
@@ -614,6 +774,7 @@ exports.getPlatformAccountSummary = async (req, res) => {
     `;
     
     const platformAccountResults = await CustomerLead.sequelize.query(platformAccountQuery, {
+      replacements: queryReplacements,
       type: QueryTypes.SELECT
     });
     
