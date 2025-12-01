@@ -77,6 +77,10 @@ exports.getLeadsOverview = async (req, res) => {
     const monthStartStr = formatDate(monthStart, false);
     const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
     const monthEndStr = formatDate(monthEnd, true);
+    const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const lastMonthStartStr = formatDate(lastMonthStart, false);
+    const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+    const lastMonthEndStr = formatDate(lastMonthEnd, true);
 
     // 3. intention_distribution、platform_distribution、recent_additions 合并SQL（应用筛选条件）
     const statsQuery = `
@@ -86,7 +90,8 @@ exports.getLeadsOverview = async (req, res) => {
         COUNT(*) AS count,
         SUM(CASE WHEN lead_time >= :todayStart AND lead_time <= :todayEnd THEN 1 ELSE 0 END) AS today,
         SUM(CASE WHEN lead_time >= :weekStart AND lead_time <= :weekEnd THEN 1 ELSE 0 END) AS this_week,
-        SUM(CASE WHEN lead_time >= :monthStart AND lead_time <= :monthEnd THEN 1 ELSE 0 END) AS this_month
+        SUM(CASE WHEN lead_time >= :monthStart AND lead_time <= :monthEnd THEN 1 ELSE 0 END) AS this_month,
+        SUM(CASE WHEN lead_time >= :lastMonthStart AND lead_time <= :lastMonthEnd THEN 1 ELSE 0 END) AS last_month
       FROM customer_leads
       WHERE 1=1${whereCondition}
       GROUP BY intention_level, source_platform
@@ -99,14 +104,16 @@ exports.getLeadsOverview = async (req, res) => {
         weekStart: weekStartStr,
         weekEnd: weekEndStr,
         monthStart: monthStartStr,
-        monthEnd: monthEndStr
+        monthEnd: monthEndStr,
+        lastMonthStart: lastMonthStartStr,
+        lastMonthEnd: lastMonthEndStr
       },
       type: QueryTypes.SELECT
     });
     // 4. intention_distribution、platform_distribution、recent_additions 变量聚合
     const intentionStats = {};
     const platformStats = {};
-    let todayLeads = 0, thisWeekLeads = 0, thisMonthLeads = 0;
+    let todayLeads = 0, thisWeekLeads = 0, thisMonthLeads = 0, lastMonthLeads = 0;
     statsRows.forEach(row => {
       if (row.intention_level) {
         intentionStats[row.intention_level] = (intentionStats[row.intention_level] || 0) + parseInt(row.count);
@@ -117,6 +124,7 @@ exports.getLeadsOverview = async (req, res) => {
       todayLeads += parseInt(row.today);
       thisWeekLeads += parseInt(row.this_week);
       thisMonthLeads += parseInt(row.this_month);
+      lastMonthLeads += parseInt(row.last_month);
     });
 
     // 5. 最近15天每一天的线索数量（以lead_time为准，应用筛选条件）
@@ -345,7 +353,8 @@ exports.getLeadsOverview = async (req, res) => {
         recent_additions: {
           today: todayLeads,
           this_week: thisWeekLeads,
-          this_month: thisMonthLeads
+          this_month: thisMonthLeads,
+          last_month: lastMonthLeads
         },
         last_15_days_trend: last15Days,
         followup: {
