@@ -36,12 +36,14 @@ exports.getLeadsOverview = async (req, res) => {
 
     const dbStartTime = Date.now();
     
-    // 构建基础查询条件
     let whereCondition = '';
     let replacements = {};
-    
-    if (assigned_user_id) {
-      whereCondition += ' AND assigned_user_id = :assigned_user_id';
+
+    if (userRole !== 'admin') {
+      whereCondition += ' AND current_follower = :current_follower';
+      replacements.current_follower = userId;
+    } else if (assigned_user_id) {
+      whereCondition += ' AND current_follower = :assigned_user_id';
       replacements.assigned_user_id = assigned_user_id;
     }
     
@@ -140,26 +142,67 @@ exports.getLeadsOverview = async (req, res) => {
     }
 
     // 6. 本周跟进统计（以follow_up_time为准，周一到周日）
-    const followupWeekLeadCount = await FollowUpRecord.count({
-      where: {
-        follow_up_time: {
-          [Op.gte]: weekStartStr,
-          [Op.lte]: weekEndStr
-        }
-      },
-      distinct: true,
-      col: 'lead_id',
-      raw: true
-    });
-    const followupWeekRecordCount = await FollowUpRecord.count({
-      where: {
-        follow_up_time: {
-          [Op.gte]: weekStartStr,
-          [Op.lte]: weekEndStr
-        }
-      },
-      raw: true
-    });
+    let followupWeekLeadCount = 0;
+    let followupWeekRecordCount = 0;
+    if (userRole === 'admin' && !assigned_user_id) {
+      followupWeekLeadCount = await FollowUpRecord.count({
+        where: {
+          follow_up_time: {
+            [Op.gte]: weekStartStr,
+            [Op.lte]: weekEndStr
+          }
+        },
+        distinct: true,
+        col: 'lead_id',
+        raw: true
+      });
+      followupWeekRecordCount = await FollowUpRecord.count({
+        where: {
+          follow_up_time: {
+            [Op.gte]: weekStartStr,
+            [Op.lte]: weekEndStr
+          }
+        },
+        raw: true
+      });
+    } else {
+      const followerId = userRole !== 'admin' ? userId : assigned_user_id;
+      const weekFollowedLeadsQuery = `
+        SELECT COUNT(DISTINCT fr.lead_id) as count
+        FROM follow_up_records fr
+        JOIN customer_leads cl ON fr.lead_id = cl.id
+        WHERE fr.follow_up_time >= :weekStart 
+        AND fr.follow_up_time <= :weekEnd
+        AND cl.current_follower = :followerId
+      `;
+      const weekFollowedResult = await FollowUpRecord.sequelize.query(weekFollowedLeadsQuery, {
+        replacements: {
+          weekStart: weekStartStr,
+          weekEnd: weekEndStr,
+          followerId
+        },
+        type: QueryTypes.SELECT
+      });
+      followupWeekLeadCount = weekFollowedResult[0]?.count || 0;
+
+      const weekFollowupRecordsQuery = `
+        SELECT COUNT(*) as count
+        FROM follow_up_records fr
+        JOIN customer_leads cl ON fr.lead_id = cl.id
+        WHERE fr.follow_up_time >= :weekStart 
+        AND fr.follow_up_time <= :weekEnd
+        AND cl.current_follower = :followerId
+      `;
+      const weekFollowupResult = await FollowUpRecord.sequelize.query(weekFollowupRecordsQuery, {
+        replacements: {
+          weekStart: weekStartStr,
+          weekEnd: weekEndStr,
+          followerId
+        },
+        type: QueryTypes.SELECT
+      });
+      followupWeekRecordCount = weekFollowupResult[0]?.count || 0;
+    }
 
     // 7. 今日统计
     // 构建今日跟进统计的查询条件
@@ -176,14 +219,13 @@ exports.getLeadsOverview = async (req, res) => {
     
     // 如果有销售员筛选，需要通过关联查询
     if (assigned_user_id) {
-      // 使用原生SQL查询以支持JOIN
       const todayFollowedLeadsQuery = `
         SELECT COUNT(DISTINCT fr.lead_id) as count
         FROM follow_up_records fr
         JOIN customer_leads cl ON fr.lead_id = cl.id
         WHERE fr.follow_up_time >= :todayStart 
         AND fr.follow_up_time <= :todayEnd
-        AND cl.assigned_user_id = :assigned_user_id
+        AND cl.current_follower = :assigned_user_id
       `;
       const todayFollowedResult = await FollowUpRecord.sequelize.query(todayFollowedLeadsQuery, {
         replacements: {
@@ -201,7 +243,7 @@ exports.getLeadsOverview = async (req, res) => {
         JOIN customer_leads cl ON fr.lead_id = cl.id
         WHERE fr.follow_up_time >= :todayStart 
         AND fr.follow_up_time <= :todayEnd
-        AND cl.assigned_user_id = :assigned_user_id
+        AND cl.current_follower = :assigned_user_id
       `;
       const todayFollowupResult = await FollowUpRecord.sequelize.query(todayFollowupRecordsQuery, {
         replacements: {
@@ -213,14 +255,51 @@ exports.getLeadsOverview = async (req, res) => {
       });
       todayFollowupRecords = todayFollowupResult[0]?.count || 0;
     } else {
-      // 没有筛选条件时使用原来的查询
-      todayFollowedLeads = await FollowUpRecord.aggregate('lead_id', 'count', {
-        distinct: true,
-        where: todayFollowupWhere
-      });
-      todayFollowupRecords = await FollowUpRecord.count({
-        where: todayFollowupWhere
-      });
+      if (userRole !== 'admin') {
+        const todayFollowedLeadsQuery = `
+          SELECT COUNT(DISTINCT fr.lead_id) as count
+          FROM follow_up_records fr
+          JOIN customer_leads cl ON fr.lead_id = cl.id
+          WHERE fr.follow_up_time >= :todayStart 
+          AND fr.follow_up_time <= :todayEnd
+          AND cl.current_follower = :current_follower
+        `;
+        const todayFollowedResult = await FollowUpRecord.sequelize.query(todayFollowedLeadsQuery, {
+          replacements: {
+            todayStart: todayStartStr,
+            todayEnd: todayEndStr,
+            current_follower: userId
+          },
+          type: QueryTypes.SELECT
+        });
+        todayFollowedLeads = todayFollowedResult[0]?.count || 0;
+
+        const todayFollowupRecordsQuery = `
+          SELECT COUNT(*) as count
+          FROM follow_up_records fr
+          JOIN customer_leads cl ON fr.lead_id = cl.id
+          WHERE fr.follow_up_time >= :todayStart 
+          AND fr.follow_up_time <= :todayEnd
+          AND cl.current_follower = :current_follower
+        `;
+        const todayFollowupResult = await FollowUpRecord.sequelize.query(todayFollowupRecordsQuery, {
+          replacements: {
+            todayStart: todayStartStr,
+            todayEnd: todayEndStr,
+            current_follower: userId
+          },
+          type: QueryTypes.SELECT
+        });
+        todayFollowupRecords = todayFollowupResult[0]?.count || 0;
+      } else {
+        todayFollowedLeads = await FollowUpRecord.aggregate('lead_id', 'count', {
+          distinct: true,
+          where: todayFollowupWhere
+        });
+        todayFollowupRecords = await FollowUpRecord.count({
+          where: todayFollowupWhere
+        });
+      }
     }
     // 构建todayEndedLeads的查询条件
     let todayEndedWhere = {
@@ -231,9 +310,11 @@ exports.getLeadsOverview = async (req, res) => {
       }
     };
     
-    // 应用筛选条件
     if (assigned_user_id) {
-      todayEndedWhere.assigned_user_id = assigned_user_id;
+      todayEndedWhere.current_follower = assigned_user_id;
+    }
+    if (userRole !== 'admin') {
+      todayEndedWhere.current_follower = userId;
     }
     if (date_from) {
       todayEndedWhere.lead_time = todayEndedWhere.lead_time || {};
