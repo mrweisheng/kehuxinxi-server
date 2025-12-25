@@ -698,11 +698,31 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
             }
           }
         
-          // 根据线索入库结果判断任务状态 - 只有入库成功才算成功
+          // 根据线索入库结果判断任务状态和错误信息
           const endTime = Date.now();
-          const taskStatus = (leadRegistrationResult.success > 0) ? 'completed' : 'failed';
-          const taskStatusText = (leadRegistrationResult.success > 0) ? '完成' : '失败';
-          console.log(`[OCR-${taskId}] 任务状态判断: ${taskStatusText} (成功注册: ${leadRegistrationResult.success})`);
+          let taskStatus = 'completed';
+          let taskError = null;
+          
+          if (leadRegistrationResult.success > 0) {
+            // 有成功导入的，任务完成
+            taskStatus = 'completed';
+            console.log(`[OCR-${taskId}] 任务状态: 完成 (成功注册: ${leadRegistrationResult.success})`);
+          } else if (leadRegistrationResult.duplicated > 0 && leadRegistrationResult.failed === 0) {
+            // 全部重复，没有失败
+            taskStatus = 'completed';
+            taskError = `所有客户都已存在，共${leadRegistrationResult.duplicated}个重复客户`;
+            console.log(`[OCR-${taskId}] 任务状态: 完成 (全部重复: ${leadRegistrationResult.duplicated})`);
+          } else if (leadRegistrationResult.failed > 0) {
+            // 有失败的，任务失败
+            taskStatus = 'failed';
+            taskError = `导入失败：成功${leadRegistrationResult.success}个，重复${leadRegistrationResult.duplicated}个，失败${leadRegistrationResult.failed}个`;
+            console.log(`[OCR-${taskId}] 任务状态: 失败 (成功: ${leadRegistrationResult.success}, 重复: ${leadRegistrationResult.duplicated}, 失败: ${leadRegistrationResult.failed})`);
+          } else {
+            // 没有成功、重复、失败（理论上不应该发生）
+            taskStatus = 'failed';
+            taskError = '未识别到任何有效客户';
+            console.log(`[OCR-${taskId}] 任务状态: 失败 (无有效客户)`);
+          }
         
         
           console.log(`[OCR-${taskId}] 更新内存任务状态为: ${taskStatus}`);
@@ -713,13 +733,14 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
             fileName: originalName,
             result: customers,
             leadRegistration: leadRegistrationResult,
-            progress: '任务完成',
+            progress: taskStatus === 'completed' ? '任务完成' : '任务失败',
             currentStep: 6,
             overallProgress: 100,
             processedCount: leadRegistrationResult.success,
             successCount: leadRegistrationResult.success,
             duplicatedCount: leadRegistrationResult.duplicated,
             failedCount: leadRegistrationResult.failed,
+            error: taskError,
             performance: {
               totalTime: `${totalTime}ms`,
               base64ConvertTime: `${base64ConvertTime}ms`,
@@ -740,7 +761,8 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
             customers_duplicated: leadRegistrationResult.duplicated || 0,
             customers_failed: leadRegistrationResult.failed || 0,
             extracted_data: customers,
-            lead_time: extractedLeadTime
+            lead_time: extractedLeadTime,
+            error_message: taskError
           };
           console.log(`[OCR-${taskId}] 数据库更新数据: ${JSON.stringify(dbUpdateData, null, 2)}`);
           
