@@ -377,6 +377,15 @@ const batchRegisterLeads = async (taskId, customers, userInfo = null, assignedUs
     
     console.log(`\n[OCR-${taskId}] 处理第${i + 1}/${customers.length}个客户: ${customerName}`);
     
+    // 更新进度 - 批量导入阶段
+    const importProgress = 75 + Math.floor((i / customers.length) * 20); // 75% - 95%
+    ocrTasks.set(taskId, {
+      ...ocrTasks.get(taskId),
+      progress: `正在导入第${i + 1}/${customers.length}个客户...`,
+      overallProgress: importProgress,
+      processedCount: i
+    });
+    
     try {
       // 严格校验客户名称格式
       console.log(`[OCR-${taskId}] 正在验证客户名称格式: ${customerName}`);
@@ -507,12 +516,14 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
   
   try {
     
-    // 更新任务状态为处理中
+    // 更新任务状态为处理中 - 步骤1：文件上传完成
     ocrTasks.set(taskId, {
       status: 'processing',
       startTime: taskStartTime,
       fileName: originalName,
-      progress: '正在转换图片格式...'
+      progress: '文件上传完成，开始图像预处理...',
+      currentStep: 1,
+      overallProgress: 10
     });
     
     // 更新数据库记录状态
@@ -536,24 +547,25 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
 
 现在请识别图片中的联系人信息。`;
 
-    // 将图片转换为base64
+    // 将图片转换为base64 - 步骤2：图像预处理
     console.log(`[OCR-${taskId}] 开始图片base64转换阶段`);
     const base64ConvertStart = Date.now();
     const base64Image = imageToBase64(filePath);
     const base64ConvertTime = Date.now() - base64ConvertStart;
     console.log(`[OCR-${taskId}] base64转换完成 - 耗时: ${base64ConvertTime}ms`);
     
-    
-    // 更新任务状态
+    // 更新任务状态 - 步骤2完成，进入步骤3
     ocrTasks.set(taskId, {
       ...ocrTasks.get(taskId),
-      progress: '正在调用AI识别服务...'
+      progress: '图像预处理完成，正在调用AI识别服务...',
+      currentStep: 2,
+      overallProgress: 25
     });
     
     // 清理临时文件
     cleanupTempFile(filePath);
 
-    // 调用千问API
+    // 调用千问API - 步骤3：OCR识别
     console.log(`[OCR-${taskId}] 开始调用千问AI API`);
     console.log(`[OCR-${taskId}] API调用参数:`);
     console.log(`  - 模型: qwen-vl-max`);
@@ -584,6 +596,14 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
       });
       apiCallTime = Date.now() - apiCallStart;
       console.log(`[OCR-${taskId}] AI API调用成功 - 耗时: ${apiCallTime}ms`);
+      
+      // 更新任务状态 - 步骤3完成，进入步骤4
+      ocrTasks.set(taskId, {
+        ...ocrTasks.get(taskId),
+        progress: 'OCR识别完成，正在解析数据...',
+        currentStep: 3,
+        overallProgress: 45
+      });
       console.log(`[OCR-${taskId}] API响应信息:`);
       console.log(`  - choices数量: ${response.choices?.length || 0}`);
       if (response.choices && response.choices.length > 0) {
@@ -611,7 +631,7 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
         console.log(`[OCR-${taskId}] 原始结果全文:\n${rawResult}`);
       
         try {
-          // 将AI返回的多行JSON字符串解析为数组
+          // 将AI返回的多行JSON字符串解析为数组 - 步骤4：数据解析
           console.log(`[OCR-${taskId}] 开始解析JSON结果`);
           const lines = rawResult.trim().split('\n');
           console.log(`[OCR-${taskId}] 分割后得到 ${lines.length} 行数据`);
@@ -639,11 +659,29 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
           customers.forEach((customer, index) => {
             console.log(`[OCR-${taskId}] 客户${index + 1}: ${JSON.stringify(customer)}`);
           });
+          
+          // 更新任务状态 - 步骤4完成，进入步骤5
+          ocrTasks.set(taskId, {
+            ...ocrTasks.get(taskId),
+            progress: `数据解析完成，共识别${customers.length}个客户，开始去重验证...`,
+            currentStep: 4,
+            overallProgress: 60,
+            totalCount: customers.length
+          });
         
           const totalTime = Date.now() - taskStartTime;
           
-          // 批量注册线索
+          // 批量注册线索 - 步骤5：去重验证和步骤6：批量导入
           console.log(`[OCR-${taskId}] 开始批量注册线索 - 客户数量: ${customers.length}`);
+          
+          // 更新任务状态 - 进入批量导入阶段
+          ocrTasks.set(taskId, {
+            ...ocrTasks.get(taskId),
+            progress: '去重验证完成，开始批量导入线索...',
+            currentStep: 5,
+            overallProgress: 75
+          });
+          
           const leadRegistrationResult = await batchRegisterLeads(taskId, customers, userInfo, assignedUserId);
           console.log(`[OCR-${taskId}] 线索注册结果: ${JSON.stringify(leadRegistrationResult)}`);
         
@@ -675,6 +713,13 @@ const processOCRAsync = async (taskId, filePath, originalName, userInfo, assigne
             fileName: originalName,
             result: customers,
             leadRegistration: leadRegistrationResult,
+            progress: '任务完成',
+            currentStep: 6,
+            overallProgress: 100,
+            processedCount: leadRegistrationResult.success,
+            successCount: leadRegistrationResult.success,
+            duplicatedCount: leadRegistrationResult.duplicated,
+            failedCount: leadRegistrationResult.failed,
             performance: {
               totalTime: `${totalTime}ms`,
               base64ConvertTime: `${base64ConvertTime}ms`,
@@ -1074,6 +1119,14 @@ exports.getTaskStatus = async (req, res) => {
       leadRegistration: task.leadRegistration,
       lead_time: task.lead_time,
       error: task.error,
+      // 进度相关字段
+      currentStep: task.currentStep || 0,
+      overallProgress: task.overallProgress || 0,
+      totalCount: task.totalCount || 0,
+      processedCount: task.processedCount || 0,
+      successCount: task.successCount || 0,
+      duplicatedCount: task.duplicatedCount || 0,
+      failedCount: task.failedCount || 0,
       performance: {
         queryTime: `${totalTime}ms`,
         ...task.performance
