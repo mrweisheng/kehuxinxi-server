@@ -647,6 +647,17 @@ exports.getLeads = async (req, res) => {
     const processedRows = rows.map(lead => {
       const leadData = lead.toJSON();
       const latestFollowUp = finalFollowUpMap[leadData.id];
+      
+      // 计算下次跟进时间（仅对启用跟进的线索）
+      let nextFollowUpTime = null;
+      if (leadData.enable_followup === 1) {
+        const intervalDays = configMap[leadData.intention_level] || 7; // 默认7天
+        const lastTime = latestFollowUp
+          ? dayjs(latestFollowUp.follow_up_time).startOf('day')
+          : dayjs(leadData.lead_time).startOf('day');
+        nextFollowUpTime = lastTime.add(intervalDays, 'day').format('YYYY-MM-DD');
+      }
+      
       return {
         ...leadData,
         current_follower: leadData.currentFollowerUser
@@ -660,6 +671,7 @@ exports.getLeads = async (req, res) => {
           follow_up_time: latestFollowUp.follow_up_time,
           follow_up_content: latestFollowUp.follow_up_content
         } : null,
+        next_follow_up_time: nextFollowUpTime,
         currentFollowerUser: undefined
       };
     });
